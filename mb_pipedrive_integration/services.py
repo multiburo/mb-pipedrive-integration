@@ -16,6 +16,7 @@ class PipedriveService:
     EXACT_ROLE_TAGS = {
         "tenant": "INQUILINO",
         "advisor": "ASESOR INMOBILIARIO",
+        "independent": "ASESOR INMOBILIARIO",
         "real_state": "ASESOR INMOBILIARIO",
         "landlord": "PROPIETARIO",
         "owner": "PROPIETARIO",
