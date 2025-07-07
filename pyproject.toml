@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mb-pipedrive-integration"
+version = "1.0.0"
+description = "Multiburo Pipedrive integration for Django applications"
+authors = [
+    {name = "Multiburo", email = "gerardo.gornes@multiburo.com"}
+]
+dependencies = [
+    "requests>=2.25.0",
+    "django>=4.0",
+]
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-django>=4.0",
+    "pytest-mock>=3.0",
+    "pytest-cov>=4.0",
+    "pytest-env>=0.8",
+    "responses>=0.24",
+    "black>=23.0",
+    "flake8>=6.0",
+    "isort>=5.12",
+    "mypy>=1.0",
+    "pre-commit>=3.0",
+    "python-dotenv>=1.0",
+]
+
+# Black configuration - with double quotes preference
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+skip-string-normalization = false  # This ensures double quotes
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | migrations
+)/
+'''
+
+# isort configuration - with double quotes
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+force_single_line = false
+
+# pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "--tb=short --cov=mb_pipedrive_integration --cov-report=term-missing"
+env = [
+    "PIPEDRIVE_COMPANY_DOMAIN=test-domain",
+    "PIPEDRIVE_API_TOKEN=test-token",
+]
+
+# mypy configuration
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = ["django.*", "requests.*"]
+ignore_missing_imports = true
