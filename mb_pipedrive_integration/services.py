@@ -59,8 +59,8 @@ class PipedriveService:
                 else:
                     raise PipedriveAPIError(f"Unsupported HTTP method: {method}")
 
-                # Handle successful responses
-                if response.status_code == 200:
+                # Handle successful responses (200-299 range)
+                if 200 <= response.status_code < 300:
                     result = response.json()
                     if result.get("success"):
                         return result
@@ -82,8 +82,9 @@ class PipedriveService:
                             response_data=response.json() if response.content else None
                         )
 
-                # Handle other HTTP errors
-                else:
+                # Handle client errors (4xx) and server errors (5xx)
+                elif response.status_code >= 400:
+                    error_data = None
                     try:
                         error_data = response.json()
                     except (ValueError, requests.exceptions.JSONDecodeError):
@@ -95,6 +96,11 @@ class PipedriveService:
                         status_code=response.status_code,
                         response_data=error_data
                     )
+
+                # Handle unexpected success codes (3xx redirects, etc.)
+                else:
+                    logger.warning(f"Unexpected response status {response.status_code}: {response.reason}")
+                    return None
 
             except requests.exceptions.Timeout:
                 if attempt < max_retries - 1:
