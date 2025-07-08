@@ -150,7 +150,6 @@ class TestPipedriveService:
             name="Full Person",
             email="full@example.com",
             phone="123-456-7890",
-            role="tenant",
             tags=["Tag1", "Tag2"],
         )
 
@@ -165,38 +164,8 @@ class TestPipedriveService:
         assert request_data["name"] == "Full Person"
         assert request_data["email"] == "full@example.com"
         assert request_data["phone"] == "123-456-7890"
-        assert "INQUILINO" in request_data["label"]  # Role tag
         assert "Tag1" in request_data["label"]  # Custom tags
         assert "Tag2" in request_data["label"]
-
-    def test_create_person_role_mapping(self, mock_service):
-        """Test that roles are correctly mapped to tags"""
-        role_mappings = {
-            "tenant": "INQUILINO",
-            "advisor": "ASESOR INMOBILIARIO",
-            "real_state": "ASESOR INMOBILIARIO",
-            "landlord": "PROPIETARIO",
-            "owner": "PROPIETARIO",
-            "guarantor": "AVAL",
-        }
-
-        for role, expected_tag in role_mappings.items():
-            with responses.RequestsMock() as rsps:
-                rsps.add(
-                    responses.POST,
-                    f"{mock_service.base_url}/persons",
-                    json={"success": True, "data": {"id": 123}},
-                    status=200,
-                )
-
-                mock_service.create_person("Test", role=role)
-
-                request_body = rsps.calls[0].request.body
-                if isinstance(request_body, bytes):
-                    request_body = request_body.decode("utf-8")
-                request_data = json.loads(request_body)
-
-                assert expected_tag in request_data["label"]
 
     @responses.activate
     def test_find_person_by_email_found(self, mock_service):
@@ -355,22 +324,6 @@ class TestPipedriveService:
         assert "Folder Number: 12345" in request_data["content"]
         assert "Tenant: John Tenant" in request_data["content"]
         assert "Property Address: 123 Test Street" in request_data["content"]
-
-    def test_exact_role_tags_mapping(self, mock_service):
-        """Test that EXACT_ROLE_TAGS mapping is correct"""
-        expected_mappings = {
-            "tenant": "INQUILINO",
-            "advisor": "ASESOR INMOBILIARIO",
-            "real_state": "ASESOR INMOBILIARIO",
-            "landlord": "PROPIETARIO",
-            "owner": "PROPIETARIO",
-            "guarantor": "AVAL",
-        }
-
-        # Access the class attribute to verify mappings
-        for role, expected_tag in expected_mappings.items():
-            assert role in mock_service.EXACT_ROLE_TAGS
-            assert mock_service.EXACT_ROLE_TAGS[role] == expected_tag
 
     def test_network_error_handling(self, mock_service):
         """Test handling of network errors"""

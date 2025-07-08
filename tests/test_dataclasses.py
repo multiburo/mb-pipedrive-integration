@@ -16,11 +16,11 @@ class TestPersonData:
     def test_valid_person_data(self):
         """Test creating valid person data"""
         person = PersonData(
-            name="John Doe", email="john@example.com", phone="+1234567890", role="tenant"
+            name="John Doe", email="john@example.com", phone="+1234567890", tags=["ASESOR INMOBILIARIO"]
         )
         assert person.name == "John Doe"
         assert person.email == "john@example.com"
-        assert person.role == "tenant"
+        assert person.tags == ["ASESOR INMOBILIARIO"]
 
     def test_person_with_minimal_data(self):
         """Test person with only required fields"""
@@ -28,7 +28,7 @@ class TestPersonData:
         assert person.name == "Jane Doe"
         assert person.email is None
         assert person.phone is None
-        assert person.role is None
+        assert person.tags is None
 
     def test_empty_name_raises_error(self):
         """Test that empty name raises validation error"""
@@ -57,20 +57,6 @@ class TestPersonData:
         for email in valid_emails:
             person = PersonData(name="Test User", email=email)
             assert person.email == email
-
-    def test_invalid_role_raises_error(self):
-        """Test that invalid role raises validation error"""
-        with pytest.raises(PipedriveValidationError, match="Invalid role"):
-            PersonData(name="John Doe", role="invalid_role")
-
-    def test_valid_roles(self):
-        """Test all valid roles"""
-        valid_roles = ["tenant", "advisor", "landlord", "guarantor", "real_state", "owner"]
-
-        for role in valid_roles:
-            person = PersonData(name="Test User", role=role)
-            assert person.role == role
-
 
 class TestOrganizationData:
     """Test OrganizationData validation"""

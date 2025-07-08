@@ -1,7 +1,7 @@
 import os
 import re
 from dataclasses import dataclass
-from typing import Optional, Dict
+from typing import Optional, Dict, Union, List
 
 from .exceptions import PipedriveConfigError, PipedriveValidationError
 
@@ -11,7 +11,7 @@ class PersonData:
     name: str
     email: Optional[str] = None
     phone: Optional[str] = None
-    role: Optional[str] = None  # tenant, advisor, landlord, etc.
+    tags: Optional[Union[str, List[str]]] = None
 
     def __post_init__(self) -> None:
         if not self.name or not self.name.strip():
@@ -19,9 +19,6 @@ class PersonData:
 
         if self.email and not self._is_valid_email(self.email):
             raise PipedriveValidationError(f"Invalid email format: {self.email}")
-
-        if self.role and self.role not in ['tenant', 'advisor', 'landlord', 'guarantor', 'real_state', 'owner']:
-            raise PipedriveValidationError(f"Invalid role: {self.role}")
 
     @staticmethod
     def _is_valid_email(email: str) -> bool:

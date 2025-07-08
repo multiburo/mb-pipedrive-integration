@@ -4,7 +4,7 @@ A Django-compatible Python package for seamless Pipedrive CRM integration.
 
 ## Features
 
-- 🏷️ **Smart tagging** with role-based person classification
+- 🏷️ **Flexible tagging system** for person classification
 - 🛡️ **Robust error handling** with custom exceptions
 - 📊 **Comprehensive logging** for debugging and monitoring
 - 🧪 **Thoroughly tested** with 95%+ test coverage
@@ -59,7 +59,6 @@ service = PipedriveService()
 person = service.create_person(
     name="John Doe",
     email="john@example.com",
-    role="tenant",
     tags=["Multiexpediente"]
 )
 
@@ -68,7 +67,7 @@ deal_data = DealData(
     title="Apartment Rental",
     folder_number=12345,
     folder_id="abc-123",
-    tenant=PersonData(name="John Doe", email="john@example.com", role="tenant")
+    tenant=PersonData(name="John Doe", email="john@example.com", tags=["INQUILINO"])
 )
 
 deal = service.create_deal(deal_data)

@@ -12,17 +12,6 @@ logger = logging.getLogger(__name__)
 class PipedriveService:
     """Service class to handle all Pipedrive integrations using direct API calls"""
 
-    # Role tags for person classification
-    EXACT_ROLE_TAGS = {
-        "tenant": "INQUILINO",
-        "advisor": "ASESOR INMOBILIARIO",
-        "independent": "ASESOR INMOBILIARIO",
-        "real_state": "ASESOR INMOBILIARIO",
-        "landlord": "PROPIETARIO",
-        "owner": "PROPIETARIO",
-        "guarantor": "AVAL",
-    }
-
     def __init__(self, config: Optional[PipedriveConfig] = None):
         if config:
             self.config = config
@@ -142,10 +131,9 @@ class PipedriveService:
             name: str,
             email: Optional[str] = None,
             phone: Optional[str] = None,
-            role: Optional[str] = None,
             tags: Optional[Union[str, List[str]]] = None
     ) -> Optional[Dict[str, Any]]:
-        """Create a person in Pipedrive with optional tags and/or role"""
+        """Create a person in Pipedrive with optional tags"""
         try:
             person_data = {
                 "name": name,
@@ -156,25 +144,9 @@ class PipedriveService:
             if phone:
                 person_data["phone"] = phone
 
-            # Collect all tags
-            all_tags = []
-
-            # Add role tag if provided
-            if role and role in self.EXACT_ROLE_TAGS:
-                all_tags.append(self.EXACT_ROLE_TAGS[role])
-
-            # Add custom tags if provided
+            # Add tags if provided
             if tags:
-                if isinstance(tags, str):
-                    # Support backward compatibility - single string tag
-                    all_tags.append(tags)
-                elif isinstance(tags, list):
-                    # Support list of tags
-                    all_tags.extend(tags)
-
-            # Set tags if any were provided
-            if all_tags:
-                person_data["label"] = ",".join(all_tags)
+                person_data["label"] = ",".join(tags)
 
             response = self._make_request("POST", "persons", person_data)
 
@@ -213,16 +185,15 @@ class PipedriveService:
             name: str,
             email: Optional[str] = None,
             phone: Optional[str] = None,
-            role: Optional[str] = None,
             tags: Optional[Union[str, List[str]]] = None
     ) -> Optional[Dict[str, Any]]:
-        """Get existing person or create new one with optional tags and/or role"""
+        """Get existing person or create new one with optional tags"""
         if email:
             person = self.find_person_by_email(email)
             if person:
                 return person
 
-        return self.create_person(name, email, phone, role, tags)
+        return self.create_person(name, email, phone, tags)
 
     def create_organization(self, name: str) -> Optional[Dict[str, Any]]:
         """Create an organization in Pipedrive"""
@@ -271,8 +242,7 @@ class PipedriveService:
                     name=deal_data.tenant.name,
                     email=deal_data.tenant.email,
                     phone=deal_data.tenant.phone,
-                    role="tenant",
-                    tags=["Multiexpediente"]
+                    tags=["INQUILINO"]
                 )
 
             advisor_person = None
@@ -281,8 +251,7 @@ class PipedriveService:
                     name=deal_data.advisor.name,
                     email=deal_data.advisor.email,
                     phone=deal_data.advisor.phone,
-                    role="advisor",
-                    tags=["Multiexpediente"]
+                    tags=["ASESOR INMOBILIARIO"]
                 )
 
             landlord_person = None
@@ -291,8 +260,7 @@ class PipedriveService:
                     name=deal_data.landlord.name,
                     email=deal_data.landlord.email,
                     phone=deal_data.landlord.phone,
-                    role="landlord",
-                    tags=["Multiexpediente"]
+                    tags=["PROPIETARIO"]
                 )
 
             # Create or get organization

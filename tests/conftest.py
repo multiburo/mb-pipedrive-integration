@@ -57,8 +57,8 @@ def sample_deal_data():
         title="Test Deal",
         folder_number=12345,
         folder_id="test-folder-uuid",
-        tenant=PersonData(name="John Tenant", email="john@test.com", role="tenant"),
-        advisor=PersonData(name="Jane Advisor", email="jane@company.com", role="real_state"),
+        tenant=PersonData(name="John Tenant", email="john@test.com", tags=["INQUILINO"]),
+        advisor=PersonData(name="Jane Advisor", email="jane@company.com", tags=["ASESOR INMOBILIARIO"]),
         property_address="123 Test Street",
         multiexpediente_url="https://test.com/folders/test-uuid",
     )

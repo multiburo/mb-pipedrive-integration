@@ -20,7 +20,7 @@ class TestPipedriveServiceUnit:
             status=200,
         )
 
-        result = mock_service.create_person("Test Person", "test@example.com", role="tenant")
+        result = mock_service.create_person("Test Person", "test@example.com", tags=["INQUILINO"])
 
         assert result is not None
         assert result["id"] == 123
@@ -37,7 +37,7 @@ class TestPipedriveServiceUnit:
 
         assert request_data["name"] == "Test Person"
         assert request_data["email"] == "test@example.com"
-        assert "INQUILINO" in request_data["label"]  # Role tag applied
+        assert "INQUILINO" in request_data["label"]
 
     @responses.activate
     def test_create_person_with_tags(self, mock_service):
