@@ -160,15 +160,11 @@ uv run mypy mb_pipedrive_integration/
 
 ## License
 
-**Proprietary - Internal Use Only**
+**MIT License**
 
-Copyright © 2025 Multiburó. All rights reserved.
+Copyright © 2025 Multiburó
 
-This software is proprietary to Multiburó and is intended for internal use only. 
-See the [LICENSE](LICENSE) file for full terms and conditions.
-
-**⚠️ IMPORTANT**: This package contains proprietary business logic and must not be 
-distributed outside of Multiburó without explicit written permission.
+See the [LICENSE](LICENSE) file for details.
 
 ## Support
 

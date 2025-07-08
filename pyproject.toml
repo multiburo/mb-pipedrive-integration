@@ -9,13 +9,13 @@ description = "Multiburo Pipedrive integration for Django applications"
 authors = [
     {name = "Multiburo", email = "gerardo.gornes@multiburo.com"}
 ]
-license = {text = "Proprietary"}
+license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: Other/Proprietary License",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -23,8 +23,14 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Office/Business :: Financial",
-    "Private :: Do Not Upload",
 ]
+
+[project.urls]
+Homepage = "https://github.com/multiburo/mb-pipedrive-django-integration"
+Issues = "https://github.com/multiburo/mb-pipedrive-django-integration/issues"
+Repository = "https://github.com/multiburo/mb-pipedrive-django-integration"
+Documentation = "https://github.com/multiburo/mb-pipedrive-django-integration#readme"
+
 dependencies = [
     "requests>=2.25.0",
     "django>=4.0",
