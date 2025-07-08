@@ -25,12 +25,6 @@ classifiers = [
     "Topic :: Office/Business :: Financial",
 ]
 
-[project.urls]
-Homepage = "https://github.com/multiburo/mb-pipedrive-django-integration"
-Issues = "https://github.com/multiburo/mb-pipedrive-django-integration/issues"
-Repository = "https://github.com/multiburo/mb-pipedrive-django-integration"
-Documentation = "https://github.com/multiburo/mb-pipedrive-django-integration#readme"
-
 dependencies = [
     "requests>=2.25.0",
     "django>=4.0",
