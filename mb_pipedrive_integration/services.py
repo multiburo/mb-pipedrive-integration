@@ -242,7 +242,7 @@ class PipedriveService:
                     name=deal_data.tenant.name,
                     email=deal_data.tenant.email,
                     phone=deal_data.tenant.phone,
-                    tags=["INQUILINO"]
+                    tags=deal_data.tenant.tags
                 )
 
             advisor_person = None
@@ -251,7 +251,7 @@ class PipedriveService:
                     name=deal_data.advisor.name,
                     email=deal_data.advisor.email,
                     phone=deal_data.advisor.phone,
-                    tags=["ASESOR INMOBILIARIO"]
+                    tags=deal_data.advisor.tags
                 )
 
             landlord_person = None
@@ -260,7 +260,7 @@ class PipedriveService:
                     name=deal_data.landlord.name,
                     email=deal_data.landlord.email,
                     phone=deal_data.landlord.phone,
-                    tags=["PROPIETARIO"]
+                    tags=deal_data.landlord.tags
                 )
 
             # Create or get organization
