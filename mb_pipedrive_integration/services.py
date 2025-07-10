@@ -406,3 +406,47 @@ class PipedriveService:
         except Exception as e:
             logger.error(f"Error finding deal by folder number {folder_number}: {str(e)}")
             return None
+
+    def add_deal_tags(self, deal_id: int, tags: List[str]) -> bool:
+        """Add tags to a deal in Pipedrive"""
+        try:
+            if not tags:
+                logger.info(f"No tags provided for deal {deal_id}")
+                return True
+
+            logger.info(f"Adding {len(tags)} tags to deal {deal_id}: {tags}")
+
+            # First, get the current deal to see existing tags
+            current_deal_response = self._make_request("GET", f"deals/{deal_id}")
+            if not current_deal_response or not current_deal_response.get("success"):
+                logger.error(f"❌ Failed to get current deal {deal_id} for tag update")
+                return False
+
+            current_deal = current_deal_response["data"]
+            existing_labels = current_deal.get("label", [])
+
+            # Convert existing labels to list if it's a string
+            if isinstance(existing_labels, str):
+                existing_labels = [label.strip() for label in existing_labels.split(",") if label.strip()]
+            elif existing_labels is None:
+                existing_labels = []
+
+            # Combine existing and new tags, removing duplicates
+            all_tags = list(set(existing_labels + tags))
+
+            # Update the deal with combined tags
+            update_data = {
+                "label": ",".join(all_tags)
+            }
+
+            response = self._make_request("PUT", f"deals/{deal_id}", update_data)
+            if response and response.get("success"):
+                logger.info(f"✅ Successfully added tags to deal {deal_id}")
+                return True
+            else:
+                logger.error(f"❌ Failed to add tags to deal {deal_id}")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Error adding tags to deal {deal_id}: {e}")
+            return False

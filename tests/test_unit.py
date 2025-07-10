@@ -356,3 +356,61 @@ class TestPipedriveServiceUnit:
         request_data = json.loads(request_body)
 
         assert request_data["status"] == "won"
+
+    @responses.activate
+    def test_add_deal_tags_integration(self, mock_service):
+        """Test add_deal_tags method integration"""
+        deal_id = 456
+        tags = ["INQUILINO", "MULTIREPORTE"]
+
+        # Mock GET current deal
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Integration Test Deal",
+                    "label": "EXISTING"
+                }
+            },
+            status=200
+        )
+
+        # Mock PUT update
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Integration Test Deal",
+                    "label": "EXISTING,INQUILINO,MULTIREPORTE"
+                }
+            },
+            status=200
+        )
+
+        result = mock_service.add_deal_tags(deal_id, tags)
+
+        assert result is True
+        assert len(responses.calls) == 2
+
+    @responses.activate
+    def test_add_deal_tags_network_error(self, mock_service):
+        """Test add_deal_tags with network error"""
+        deal_id = 789
+        tags = ["TEST_TAG"]
+
+        # Mock network error on GET
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            body=ConnectionError("Network error")
+        )
+
+        result = mock_service.add_deal_tags(deal_id, tags)
+
+        assert result is False

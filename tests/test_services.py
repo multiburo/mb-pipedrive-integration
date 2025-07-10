@@ -346,3 +346,268 @@ class TestPipedriveService:
 
             assert "timeout" in str(exc_info.value).lower()
             assert exc_info.value.retry_count == 3  # max_retries
+
+    @responses.activate
+    def test_add_deal_tags_success(self, mock_service):
+        """Test adding tags to a deal successfully"""
+        deal_id = 123
+        tags = ["INQUILINO", "ASESOR INMOBILIARIO"]
+
+        # Mock getting current deal (no existing tags)
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Test Deal",
+                    "label": None  # No existing tags
+                }
+            },
+            status=200
+        )
+
+        # Mock updating deal with tags
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Test Deal",
+                    "label": "INQUILINO,ASESOR INMOBILIARIO"
+                }
+            },
+            status=200
+        )
+
+        result = mock_service.add_deal_tags(deal_id, tags)
+
+        assert result is True
+        assert len(responses.calls) == 2  # GET + PUT
+
+        # Verify the PUT request data
+        put_request = responses.calls[1].request
+        import json
+        request_data = json.loads(put_request.body.decode('utf-8'))
+        assert request_data["label"] == "INQUILINO,ASESOR INMOBILIARIO"
+
+
+    @responses.activate
+    def test_add_deal_tags_with_existing_tags(self, mock_service):
+        """Test adding tags to a deal that already has tags"""
+        deal_id = 123
+        new_tags = ["PROPIETARIO"]
+
+        # Mock getting current deal (with existing tags)
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Test Deal",
+                    "label": "INQUILINO,EXISTING_TAG"
+                }
+            },
+            status=200
+        )
+
+        # Mock updating deal with combined tags
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Test Deal",
+                    "label": "INQUILINO,EXISTING_TAG,PROPIETARIO"
+                }
+            },
+            status=200
+        )
+
+        result = mock_service.add_deal_tags(deal_id, new_tags)
+
+        assert result is True
+
+        # Verify the PUT request includes both existing and new tags
+        put_request = responses.calls[1].request
+        import json
+        request_data = json.loads(put_request.body.decode('utf-8'))
+
+        # Should contain all tags (order might vary due to set operation)
+        label_tags = set(request_data["label"].split(","))
+        expected_tags = {"INQUILINO", "EXISTING_TAG", "PROPIETARIO"}
+        assert label_tags == expected_tags
+
+
+    @responses.activate
+    def test_add_deal_tags_duplicate_prevention(self, mock_service):
+        """Test that duplicate tags are not added"""
+        deal_id = 123
+        duplicate_tags = ["INQUILINO", "EXISTING_TAG"]  # INQUILINO already exists
+
+        # Mock getting current deal (with existing tags)
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Test Deal",
+                    "label": "INQUILINO,EXISTING_TAG"
+                }
+            },
+            status=200
+        )
+
+        # Mock updating deal (should be the same tags)
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Test Deal",
+                    "label": "INQUILINO,EXISTING_TAG"
+                }
+            },
+            status=200
+        )
+
+        result = mock_service.add_deal_tags(deal_id, duplicate_tags)
+
+        assert result is True
+
+        # Verify no duplicate tags in the request
+        put_request = responses.calls[1].request
+        import json
+        request_data = json.loads(put_request.body.decode('utf-8'))
+
+        label_tags = request_data["label"].split(",")
+        # Should have only 2 unique tags, not 4
+        assert len(set(label_tags)) == 2
+
+
+    @responses.activate
+    def test_add_deal_tags_empty_list(self, mock_service):
+        """Test adding empty tag list"""
+        deal_id = 123
+        empty_tags = []
+
+        result = mock_service.add_deal_tags(deal_id, empty_tags)
+
+        assert result is True
+        assert len(responses.calls) == 0  # No API calls should be made
+
+
+    @responses.activate
+    def test_add_deal_tags_get_deal_failure(self, mock_service):
+        """Test failure when getting current deal info"""
+        deal_id = 123
+        tags = ["INQUILINO"]
+
+        # Mock failed GET request
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={"success": False, "error": "Deal not found"},
+            status=404
+        )
+
+        result = mock_service.add_deal_tags(deal_id, tags)
+
+        assert result is False
+        assert len(responses.calls) == 1  # Only GET call, no PUT
+
+
+    @responses.activate
+    def test_add_deal_tags_update_failure(self, mock_service):
+        """Test failure when updating deal with tags"""
+        deal_id = 123
+        tags = ["INQUILINO"]
+
+        # Mock successful GET
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Test Deal",
+                    "label": None
+                }
+            },
+            status=200
+        )
+
+        # Mock failed PUT
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={"success": False, "error": "Update failed"},
+            status=400
+        )
+
+        result = mock_service.add_deal_tags(deal_id, tags)
+
+        assert result is False
+        assert len(responses.calls) == 2  # GET + PUT
+
+
+    @responses.activate
+    def test_add_deal_tags_with_string_labels(self, mock_service):
+        """Test handling existing labels as string (comma-separated)"""
+        deal_id = 123
+        new_tags = ["NEW_TAG"]
+
+        # Mock getting current deal with string labels
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Test Deal",
+                    "label": "TAG1,TAG2, TAG3 "  # Note spaces and formatting
+                }
+            },
+            status=200
+        )
+
+        # Mock updating deal
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/deals/{deal_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": deal_id,
+                    "title": "Test Deal",
+                    "label": "TAG1,TAG2,TAG3,NEW_TAG"
+                }
+            },
+            status=200
+        )
+
+        result = mock_service.add_deal_tags(deal_id, new_tags)
+
+        assert result is True
+
+        # Verify the request properly handles the string parsing
+        put_request = responses.calls[1].request
+        import json
+        request_data = json.loads(put_request.body.decode('utf-8'))
+
+        label_tags = set(request_data["label"].split(","))
+        expected_tags = {"TAG1", "TAG2", "TAG3", "NEW_TAG"}
+        assert label_tags == expected_tags
