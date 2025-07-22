@@ -4,6 +4,7 @@ import responses
 
 from mb_pipedrive_integration.dataclasses import PipedriveConfig
 from mb_pipedrive_integration.exceptions import PipedriveConfigError
+from mb_pipedrive_integration.dataclasses import OrganizationData
 
 
 class TestPipedriveServiceUnit:
@@ -108,20 +109,106 @@ class TestPipedriveServiceUnit:
         assert result is None
 
     @responses.activate
+    @responses.activate
     def test_create_organization_success(self, mock_service):
-        """Test organization creation"""
+        """Test organization creation with custom_fields"""
         responses.add(
             responses.POST,
             f"{mock_service.base_url}/organizations",
-            json={"success": True, "data": {"id": 456, "name": "Test Org"}},
+            json={"success": True, "data": {"id": 456, "name": "Integration Test Org"}},
             status=200,
         )
 
-        result = mock_service.create_organization("Test Org")
+        org_data = OrganizationData(name="Integration Test Org")
+        result = mock_service.create_organization(org_data)
 
         assert result is not None
         assert result["id"] == 456
-        assert result["name"] == "Test Org"
+        assert result["name"] == "Integration Test Org"
+
+    @responses.activate
+    def test_create_organization_with_custom_fields(self, mock_service):
+        """Test organization creation with custom fields"""
+
+        # Set up mock service with custom fields configuration
+        mock_service.config.custom_fields = {
+            "org_mb_id": "a1b2c3d4e5f6g7h8"  # Mock Pipedrive custom field hash
+        }
+
+        # Mock the API response
+        responses.add(
+            responses.POST,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": {
+                    "id": 999,
+                    "name": "Test Org with Custom Fields",
+                    "a1b2c3d4e5f6g7h8": "test-uuid-123"  # Custom field in response
+                }
+            },
+            status=200
+        )
+
+        # Create OrganizationData with custom fields
+        org_data = OrganizationData(
+            name="Test Org with Custom Fields",
+            custom_fields={"mb_id": "test-uuid-123"}
+        )
+
+        result = mock_service.create_organization(org_data)
+
+        assert result is not None
+        assert result["name"] == "Test Org with Custom Fields"
+        assert result["id"] == 999
+
+        # Verify the request data included custom field
+        request_body = responses.calls[0].request.body
+        request_data = json.loads(request_body.decode('utf-8'))
+
+        assert request_data["name"] == "Test Org with Custom Fields"
+        # The custom field should be mapped to the Pipedrive hash
+        assert "a1b2c3d4e5f6g7h8" in request_data
+        assert request_data["a1b2c3d4e5f6g7h8"] == "test-uuid-123"
+
+    # Alternative test approach - if you want to test without setting up custom_fields
+    @responses.activate
+    def test_create_organization_with_custom_fields_no_mapping(self, mock_service):
+        """Test organization creation with custom fields but no mapping configured"""
+
+        # Don't set up custom_fields mapping
+        mock_service.config.custom_fields = None
+
+        responses.add(
+            responses.POST,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": {
+                    "id": 999,
+                    "name": "Test Org with Custom Fields"
+                }
+            },
+            status=200
+        )
+
+        org_data = OrganizationData(
+            name="Test Org with Custom Fields",
+            custom_fields={"mb_id": "test-uuid-123"}
+        )
+
+        result = mock_service.create_organization(org_data)
+
+        assert result is not None
+        assert result["name"] == "Test Org with Custom Fields"
+
+        # Verify only the name was sent (no custom fields without mapping)
+        request_body = responses.calls[0].request.body
+        request_data = json.loads(request_body.decode('utf-8'))
+
+        assert request_data["name"] == "Test Org with Custom Fields"
+        # No custom field hashes should be present
+        assert len(request_data) == 1  # Only name field
 
     @responses.activate
     def test_create_deal_full_workflow(

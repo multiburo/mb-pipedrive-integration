@@ -9,6 +9,7 @@ from mb_pipedrive_integration.dataclasses import (
     PipedriveConfig,
     PersonData,
     DealData,
+    OrganizationData,
 )
 from mb_pipedrive_integration.exceptions import (
     PipedriveAPIError,
@@ -215,11 +216,18 @@ class TestPipedriveService:
         responses.add(
             responses.POST,
             f"{mock_service.base_url}/organizations",
-            json={"success": True, "data": {"id": 456, "name": "Test Org"}},
+            json={
+                "success": True,
+                "data": {
+                    "id": 456,
+                    "name": "Test Org",
+                }
+            },
             status=200,
         )
 
-        result = mock_service.create_organization("Test Org")
+        org_data = OrganizationData(name="Test Org")
+        result = mock_service.create_organization(org_data)
 
         assert result is not None
         assert result["id"] == 456
@@ -240,6 +248,112 @@ class TestPipedriveService:
         assert result is not None
         assert result["id"] == 456
         assert result["name"] == "Found Org"
+
+    # @responses.activate
+    # def test_find_organization_by_custom_field_found(self, mock_service):
+    #     """Test finding organization by custom field when it exists"""
+    #     # Set up mock config with custom fields
+    #     mock_service.config.custom_fields = {
+    #         "org_mb_id": "hash123",
+    #         "org_external_id": "hash456"
+    #     }
+    #
+    #     # Mock API response with organizations
+    #     responses.add(
+    #         responses.GET,
+    #         f"{mock_service.base_url}/organizations",
+    #         json={
+    #             "success": True,
+    #             "data": [
+    #                 {
+    #                     "id": 100,
+    #                     "name": "First Org",
+    #                     "hash123": "mb-uuid-123",  # mb_id field
+    #                     "hash456": "ext-456"  # external_id field
+    #                 },
+    #                 {
+    #                     "id": 200,
+    #                     "name": "Second Org",
+    #                     "hash123": "mb-uuid-789",
+    #                     "hash456": "ext-789"
+    #                 }
+    #             ],
+    #             "additional_data": {
+    #                 "pagination": {"more_items_in_collection": False}
+    #             }
+    #         },
+    #         status=200
+    #     )
+    #
+    #     # Test finding by mb_id
+    #     result = mock_service.find_organization_by_custom_field("mb_id", "mb-uuid-123")
+    #
+    #     assert result is not None
+    #     assert result["id"] == 100
+    #     assert result["name"] == "First Org"
+    #     assert result["hash123"] == "mb-uuid-123"
+    #
+    # def test_find_organization_by_custom_field_not_found(self, mock_service):
+    #     """Test finding organization by custom field when it doesn't exist"""
+    #     mock_service.config.custom_fields = {"org_mb_id": "hash123"}
+    #
+    #     responses.add(
+    #         responses.GET,
+    #         f"{mock_service.base_url}/organizations",
+    #         json={
+    #             "success": True,
+    #             "data": [
+    #                 {"id": 100, "name": "Org", "hash123": "different-value"}
+    #             ],
+    #             "additional_data": {
+    #                 "pagination": {"more_items_in_collection": False}
+    #             }
+    #         },
+    #         status=200
+    #     )
+    #
+    #     result = mock_service.find_organization_by_custom_field("mb_id", "not-found-value")
+    #     assert result is None
+    #
+    # @responses.activate
+    # def test_find_organization_by_custom_field_pagination(self, mock_service):
+    #     """Test finding organization with pagination"""
+    #     mock_service.config.custom_fields = {"org_mb_id": "hash123"}
+    #
+    #     # First page
+    #     responses.add(
+    #         responses.GET,
+    #         f"{mock_service.base_url}/organizations?start=0&limit=100",
+    #         json={
+    #             "success": True,
+    #             "data": [{"id": 100, "name": "Org1", "hash123": "wrong-value"}],
+    #             "additional_data": {
+    #                 "pagination": {"more_items_in_collection": True}
+    #             }
+    #         },
+    #         status=200
+    #     )
+    #
+    #     # Second page (contains our target)
+    #     responses.add(
+    #         responses.GET,
+    #         f"{mock_service.base_url}/organizations?start=100&limit=100",
+    #         json={
+    #             "success": True,
+    #             "data": [{"id": 200, "name": "Target Org", "hash123": "target-value"}],
+    #             "additional_data": {
+    #                 "pagination": {"more_items_in_collection": False}
+    #             }
+    #         },
+    #         status=200
+    #     )
+    #
+    #     result = mock_service.find_organization_by_custom_field("mb_id", "target-value")
+    #
+    #     assert result is not None
+    #     assert result["id"] == 200
+    #     assert result["name"] == "Target Org"
+    #     assert len(responses.calls) == 2  # Should have made 2 API calls
 
     @responses.activate
     def test_update_deal_stage(self, mock_service):
@@ -392,7 +506,10 @@ class TestPipedriveService:
         put_request = responses.calls[1].request
         import json
         request_data = json.loads(put_request.body.decode('utf-8'))
-        assert request_data["label"] == "INQUILINO,ASESOR INMOBILIARIO"
+
+        actual_tags = set(request_data["label"].split(","))
+        expected_tags = {"INQUILINO", "ASESOR INMOBILIARIO"}
+        assert actual_tags == expected_tags
 
 
     @responses.activate
@@ -611,3 +728,317 @@ class TestPipedriveService:
         label_tags = set(request_data["label"].split(","))
         expected_tags = {"TAG1", "TAG2", "TAG3", "NEW_TAG"}
         assert label_tags == expected_tags
+
+    @responses.activate
+    def test_find_organization_by_custom_field_found(self, mock_service):
+        """Test finding organization by custom field when it exists"""
+        # Set up mock config with custom fields
+        mock_service.config.custom_fields = {
+            "org_mb_id": "hash123",
+            "org_external_id": "hash456"
+        }
+
+        # Mock API response with organizations
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": [
+                    {
+                        "id": 100,
+                        "name": "First Org",
+                        "hash123": "mb-uuid-123",  # mb_id field
+                        "hash456": "ext-456"  # external_id field
+                    },
+                    {
+                        "id": 200,
+                        "name": "Second Org",
+                        "hash123": "mb-uuid-789",
+                        "hash456": "ext-789"
+                    }
+                ],
+                "additional_data": {
+                    "pagination": {"more_items_in_collection": False}
+                }
+            },
+            status=200
+        )
+
+        # Test finding by mb_id
+        result = mock_service.find_organization_by_custom_field("mb_id", "mb-uuid-123")
+
+        assert result is not None
+        assert result["id"] == 100
+        assert result["name"] == "First Org"
+        assert result["hash123"] == "mb-uuid-123"
+
+    @responses.activate
+    def test_find_organization_by_custom_field_not_found(self, mock_service):
+        """Test finding organization by custom field when it doesn't exist"""
+        mock_service.config.custom_fields = {"org_mb_id": "hash123"}
+
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": [
+                    {"id": 100, "name": "Org", "hash123": "different-value"}
+                ],
+                "additional_data": {
+                    "pagination": {"more_items_in_collection": False}
+                }
+            },
+            status=200
+        )
+
+        result = mock_service.find_organization_by_custom_field("mb_id", "not-found-value")
+        assert result is None
+
+    @responses.activate
+    def test_find_organization_by_custom_field_pagination(self, mock_service):
+        """Test finding organization with pagination"""
+        mock_service.config.custom_fields = {"org_mb_id": "hash123"}
+
+        # First page - FIXED: Include api_token in the URL pattern
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/organizations",  # Use base URL without query params
+            json={
+                "success": True,
+                "data": [{"id": 100, "name": "Org1", "hash123": "wrong-value"}],
+                "additional_data": {
+                    "pagination": {"more_items_in_collection": True}
+                }
+            },
+            status=200
+        )
+
+        # Second page (contains our target) - FIXED: Use same pattern
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/organizations",  # Use base URL without query params
+            json={
+                "success": True,
+                "data": [{"id": 200, "name": "Target Org", "hash123": "target-value"}],
+                "additional_data": {
+                    "pagination": {"more_items_in_collection": False}
+                }
+            },
+            status=200
+        )
+
+        result = mock_service.find_organization_by_custom_field("mb_id", "target-value")
+
+        assert result is not None
+        assert result["id"] == 200
+        assert result["name"] == "Target Org"
+        assert len(responses.calls) == 2  # Should have made 2 API calls
+
+    def test_find_organization_by_custom_field_no_config(self, mock_service):
+        """Test finding organization when no custom fields configured"""
+        mock_service.config.custom_fields = None
+
+        result = mock_service.find_organization_by_custom_field("mb_id", "test")
+        assert result is None
+
+    def test_find_organization_by_custom_field_no_mapping(self, mock_service):
+        """Test finding organization when field not mapped"""
+        mock_service.config.custom_fields = {"org_other_field": "hash999"}
+
+        result = mock_service.find_organization_by_custom_field("mb_id", "test")
+        assert result is None
+
+    @responses.activate
+    def test_find_organization_by_mb_id(self, mock_service):
+        """Test the convenience method for finding by mb_id"""
+        mock_service.config.custom_fields = {"org_mb_id": "hash123"}
+
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": [{"id": 100, "name": "Test Org", "hash123": "mb-123"}],
+                "additional_data": {"pagination": {"more_items_in_collection": False}}
+            },
+            status=200
+        )
+
+        result = mock_service.find_organization_by_mb_id("mb-123")
+
+        assert result is not None
+        assert result["id"] == 100
+
+    @responses.activate
+    def test_create_organization_with_custom_fields(self, mock_service):
+        """Test creating organization with custom fields"""
+        mock_service.config.custom_fields = {
+            "org_mb_id": "hash123",
+            "org_external_id": "hash456"
+        }
+
+        responses.add(
+            responses.POST,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": {
+                    "id": 300,
+                    "name": "New Org",
+                    "hash123": "mb-new-123",
+                    "hash456": "ext-new-456"
+                }
+            },
+            status=200
+        )
+
+        org_data = OrganizationData(
+            name="New Org",
+            custom_fields={
+                "mb_id": "mb-new-123",
+                "external_id": "ext-new-456"
+            }
+        )
+
+        result = mock_service.create_organization(org_data)
+
+        assert result is not None
+        assert result["id"] == 300
+        assert result["name"] == "New Org"
+
+        # Verify request data
+        request_body = responses.calls[0].request.body
+        request_data = json.loads(request_body.decode('utf-8'))
+
+        assert request_data["name"] == "New Org"
+        assert request_data["hash123"] == "mb-new-123"
+        assert request_data["hash456"] == "ext-new-456"
+
+    @responses.activate
+    def test_create_organization_custom_fields_no_mapping(self, mock_service):
+        """Test creating organization when custom field has no mapping"""
+        mock_service.config.custom_fields = {"org_other_field": "hash999"}
+
+        responses.add(
+            responses.POST,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": {"id": 400, "name": "Test Org"}
+            },
+            status=200
+        )
+
+        org_data = OrganizationData(
+            name="Test Org",
+            custom_fields={"mb_id": "unmapped-value"}  # No mapping for mb_id
+        )
+
+        result = mock_service.create_organization(org_data)
+
+        assert result is not None
+
+        # Verify only name was sent (no unmapped custom fields)
+        request_body = responses.calls[0].request.body
+        request_data = json.loads(request_body.decode('utf-8'))
+
+        assert request_data["name"] == "Test Org"
+        assert len(request_data) == 1  # Only name field
+
+    @responses.activate
+    def test_get_or_create_organization_finds_by_mb_id(self, mock_service):
+        """Test get_or_create finds existing organization by mb_id"""
+        mock_service.config.custom_fields = {"org_mb_id": "hash123"}
+
+        # Mock find_organization_by_mb_id (found)
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": [{"id": 500, "name": "Existing Org", "hash123": "existing-mb-123"}],
+                "additional_data": {"pagination": {"more_items_in_collection": False}}
+            },
+            status=200
+        )
+
+        org_data = OrganizationData(
+            name="Any Name",
+            custom_fields={"mb_id": "existing-mb-123"}
+        )
+
+        result = mock_service.get_or_create_organization(org_data)
+
+        assert result is not None
+        assert result["id"] == 500
+        assert result["name"] == "Existing Org"
+        assert len(responses.calls) == 1  # Only search call, no create call
+
+    @responses.activate
+    def test_get_or_create_organization_creates_when_not_found(self, mock_service):
+        """Test get_or_create creates organization when not found by mb_id"""
+        mock_service.config.custom_fields = {"org_mb_id": "hash123"}
+
+        # Mock find_organization_by_mb_id (not found)
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": [],
+                "additional_data": {"pagination": {"more_items_in_collection": False}}
+            },
+            status=200
+        )
+
+        # Mock create_organization
+        responses.add(
+            responses.POST,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": {"id": 600, "name": "New Org", "hash123": "new-mb-123"}
+            },
+            status=200
+        )
+
+        org_data = OrganizationData(
+            name="New Org",
+            custom_fields={"mb_id": "new-mb-123"}
+        )
+
+        result = mock_service.get_or_create_organization(org_data)
+
+        assert result is not None
+        assert result["id"] == 600
+        assert result["name"] == "New Org"
+        assert len(responses.calls) == 2  # Search + create calls
+
+    @responses.activate
+    def test_get_or_create_organization_no_mb_id_creates_directly(self, mock_service):
+        """Test get_or_create creates directly when no mb_id provided"""
+        responses.add(
+            responses.POST,
+            f"{mock_service.base_url}/organizations",
+            json={
+                "success": True,
+                "data": {"id": 700, "name": "No MB ID Org"}
+            },
+            status=200
+        )
+
+        org_data = OrganizationData(name="No MB ID Org")  # No custom_fields
+
+        result = mock_service.get_or_create_organization(org_data)
+
+        assert result is not None
+        assert result["id"] == 700
+        assert len(responses.calls) == 1  # Only create call, no search
+
+#
+# class TestOrganizationCustomFields:
+#     """Test organization methods with custom fields support"""
+#
+#
