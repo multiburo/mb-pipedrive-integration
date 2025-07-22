@@ -1037,8 +1037,439 @@ class TestPipedriveService:
         assert result["id"] == 700
         assert len(responses.calls) == 1  # Only create call, no search
 
-#
-# class TestOrganizationCustomFields:
-#     """Test organization methods with custom fields support"""
-#
-#
+
+class TestPersonOrganizationLinking:
+    """Test linking persons to organizations"""
+
+    @responses.activate
+    def test_link_person_to_organization_success(self, mock_service):
+        """Test successfully linking person to organization"""
+        person_id = 123
+        org_id = 456
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": person_id,
+                    "name": "Test Person",
+                    "org_id": org_id
+                }
+            },
+            status=200
+        )
+
+        result = mock_service.link_person_to_organization(person_id, org_id)
+
+        assert result is True
+
+        # Verify request data
+        request_body = responses.calls[0].request.body
+        request_data = json.loads(request_body.decode('utf-8'))
+        assert request_data["org_id"] == org_id
+
+    @responses.activate
+    def test_link_person_to_organization_failure(self, mock_service):
+        """Test linking person to organization when API fails"""
+        person_id = 123
+        org_id = 456
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={
+                "success": False,
+                "error": "Person not found"
+            },
+            status=404
+        )
+
+        result = mock_service.link_person_to_organization(person_id, org_id)
+
+        assert result is False
+
+    @responses.activate
+    def test_link_person_to_organization_api_error(self, mock_service):
+        """Test linking when API returns error"""
+        person_id = 123
+        org_id = 456
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={"error": "Invalid request"},
+            status=400
+        )
+
+        result = mock_service.link_person_to_organization(person_id, org_id)
+
+        assert result is False
+
+
+class TestCreateDealWithLinking:
+    """Test create_deal method with the new linking functionality"""
+
+    @responses.activate
+    def test_create_deal_links_advisor_to_organization(self, mock_service):
+        """Test that create_deal links advisor person to organization"""
+
+        # Set up mock service with custom fields (important!)
+        mock_service.config.custom_fields = {
+            "org_mb_id": "test_hash_123"
+        }
+
+        base_url = mock_service.base_url
+
+        # Create sample deal data
+        from mb_pipedrive_integration import DealData, PersonData, OrganizationData
+
+        deal_data = DealData(
+            title="Test Deal",
+            folder_number=12345,
+            folder_id="test-folder-123",
+            advisor=PersonData(
+                name="Test Advisor",
+                email="advisor@example.com",
+                tags=["ASESOR INMOBILIARIO"]
+            ),
+            organization=OrganizationData(
+                name="Test Organization",
+                custom_fields={"mb_id": "org-test-123"}
+            )
+        )
+
+        # Mock advisor person search (not found)
+        responses.add(
+            responses.GET,
+            f"{base_url}/persons/search",
+            json={"success": True, "data": {"items": []}},
+            status=200
+        )
+
+        # Mock advisor person creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/persons",
+            json={"success": True, "data": {"id": 123, "name": "Test Advisor"}},
+            status=200
+        )
+
+        # Mock organization search by mb_id (not found)
+        responses.add(
+            responses.GET,
+            f"{base_url}/organizations",
+            json={
+                "success": True,
+                "data": [],
+                "additional_data": {"pagination": {"more_items_in_collection": False}}
+            },
+            status=200
+        )
+
+        # Mock organization creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/organizations",
+            json={"success": True, "data": {"id": 456, "name": "Test Organization"}},
+            status=200
+        )
+
+        # Mock linking advisor to organization
+        responses.add(
+            responses.PUT,
+            f"{base_url}/persons/123",
+            json={
+                "success": True,
+                "data": {"id": 123, "name": "Test Advisor", "org_id": 456}
+            },
+            status=200
+        )
+
+        # Mock deal creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/deals",
+            json={"success": True, "data": {"id": 789, "title": "Test Deal"}},
+            status=200
+        )
+
+        # Mock notes creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/notes",
+            json={"success": True, "data": {"id": 999}},
+            status=200
+        )
+
+        # Execute the test
+        result = mock_service.create_deal(deal_data)
+
+        assert result is not None
+        assert result["id"] == 789
+
+        # FIXED: Look for the linking call with proper URL matching
+        linking_call = None
+        for call in responses.calls:
+            if (call.request.method == "PUT" and
+                    "/persons/123" in call.request.url):  # Just check if URL contains the path
+                linking_call = call
+                break
+
+        assert linking_call is not None, f"Person-to-organization linking call not found. Calls made: {[f'{c.request.method} {c.request.url}' for c in responses.calls]}"
+
+        # Verify linking request data
+        link_request_data = json.loads(linking_call.request.body.decode('utf-8'))
+        assert link_request_data["org_id"] == 456
+
+    # Alternative even simpler approach - just count the PUT calls
+    @responses.activate
+    def test_create_deal_links_advisor_to_organization_simple(self, mock_service):
+        """Test that create_deal makes a PUT call to link person to organization"""
+
+        mock_service.config.custom_fields = {"org_mb_id": "test_hash_123"}
+
+        from mb_pipedrive_integration import DealData, PersonData, OrganizationData
+
+        deal_data = DealData(
+            title="Test Deal",
+            folder_number=12345,
+            folder_id="test-folder-123",
+            advisor=PersonData(
+                name="Test Advisor",
+                email="advisor@example.com",
+                tags=["ASESOR INMOBILIARIO"]
+            ),
+            organization=OrganizationData(
+                name="Test Organization",
+                custom_fields={"mb_id": "org-test-123"}
+            )
+        )
+
+        # Mock all responses (same as above but condensed)
+        base_url = mock_service.base_url
+
+        responses.add(responses.GET, f"{base_url}/persons/search",
+                      json={"success": True, "data": {"items": []}}, status=200)
+        responses.add(responses.POST, f"{base_url}/persons",
+                      json={"success": True, "data": {"id": 123, "name": "Test Advisor"}}, status=200)
+        responses.add(responses.GET, f"{base_url}/organizations",
+                      json={"success": True, "data": [],
+                            "additional_data": {"pagination": {"more_items_in_collection": False}}}, status=200)
+        responses.add(responses.POST, f"{base_url}/organizations",
+                      json={"success": True, "data": {"id": 456, "name": "Test Organization"}}, status=200)
+        responses.add(responses.PUT, f"{base_url}/persons/123",
+                      json={"success": True, "data": {"id": 123, "org_id": 456}}, status=200)
+        responses.add(responses.POST, f"{base_url}/deals",
+                      json={"success": True, "data": {"id": 789, "title": "Test Deal"}}, status=200)
+        responses.add(responses.POST, f"{base_url}/notes",
+                      json={"success": True, "data": {"id": 999}}, status=200)
+
+        # Execute
+        result = mock_service.create_deal(deal_data)
+        assert result is not None
+
+        # SIMPLE CHECK: Just verify that a PUT call was made to persons endpoint
+        put_calls = [call for call in responses.calls if call.request.method == "PUT"]
+        person_put_calls = [call for call in put_calls if "/persons/" in call.request.url]
+
+        assert len(person_put_calls) == 1, f"Expected 1 person linking call, found {len(person_put_calls)}"
+
+        # Verify the PUT call has the right data
+        put_call = person_put_calls[0]
+        put_data = json.loads(put_call.request.body.decode('utf-8'))
+        assert put_data["org_id"] == 456, f"Expected org_id=456, got {put_data}"
+
+    @responses.activate
+    def test_create_deal_no_linking_when_no_advisor(self, mock_service):
+        """Test that no linking occurs when there's no advisor"""
+        base_url = mock_service.base_url
+
+        # Create deal data without advisor
+        from mb_pipedrive_integration import DealData, OrganizationData
+        deal_data = DealData(
+            title="No Advisor Deal",
+            folder_number=123,
+            folder_id="test-123",
+            organization=OrganizationData(
+                name="Test Org",
+                custom_fields={"mb_id": "org-123"}
+            )
+        )
+
+        # Mock organization search (not found)
+        responses.add(
+            responses.GET,
+            f"{base_url}/organizations",
+            json={
+                "success": True,
+                "data": [],
+                "additional_data": {"pagination": {"more_items_in_collection": False}}
+            },
+            status=200
+        )
+
+        # Mock organization creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/organizations",
+            json={"success": True, "data": {"id": 456, "name": "Test Org"}},
+            status=200
+        )
+
+        # Mock deal creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/deals",
+            json={"success": True, "data": {"id": 789, "title": "No Advisor Deal"}},
+            status=200
+        )
+
+        # Mock notes creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/notes",
+            json={"success": True, "data": {"id": 999}},
+            status=200
+        )
+
+        result = mock_service.create_deal(deal_data)
+
+        assert result is not None
+        assert result["id"] == 789
+
+        # Verify that NO linking call was made
+        linking_calls = [call for call in responses.calls
+                         if call.request.method == "PUT" and "/persons/" in call.request.url]
+        assert len(linking_calls) == 0, "Unexpected linking call made when no advisor present"
+
+    @responses.activate
+    def test_create_deal_no_linking_when_no_organization(self, mock_service):
+        """Test that no linking occurs when there's no organization"""
+        base_url = mock_service.base_url
+
+        # Create deal data without organization
+        from mb_pipedrive_integration import DealData, PersonData
+        deal_data = DealData(
+            title="No Org Deal",
+            folder_number=123,
+            folder_id="test-123",
+            advisor=PersonData(
+                name="Test Advisor",
+                email="advisor@example.com",
+                tags=["ASESOR INMOBILIARIO"]
+            )
+        )
+
+        # Mock advisor person search (not found)
+        responses.add(
+            responses.GET,
+            f"{base_url}/persons/search",
+            json={"success": True, "data": {"items": []}},
+            status=200
+        )
+
+        # Mock advisor person creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/persons",
+            json={"success": True, "data": {"id": 123, "name": "Test Advisor"}},
+            status=200
+        )
+
+        # Mock deal creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/deals",
+            json={"success": True, "data": {"id": 789, "title": "No Org Deal"}},
+            status=200
+        )
+
+        # Mock notes creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/notes",
+            json={"success": True, "data": {"id": 999}},
+            status=200
+        )
+
+        result = mock_service.create_deal(deal_data)
+
+        assert result is not None
+        assert result["id"] == 789
+
+        # Verify that NO linking call was made
+        linking_calls = [call for call in responses.calls
+                         if call.request.method == "PUT" and "/persons/" in call.request.url]
+        assert len(linking_calls) == 0, "Unexpected linking call made when no organization present"
+
+    @responses.activate
+    def test_create_deal_continues_when_linking_fails(self, mock_service, sample_deal_data):
+        """Test that deal creation continues even if linking fails"""
+        base_url = mock_service.base_url
+
+        # Mock all the usual setup calls (persons, organization creation)
+        # ... (similar to first test but condensed for brevity)
+
+        # Mock advisor person creation
+        responses.add(
+            responses.GET,
+            f"{base_url}/persons/search",
+            json={"success": True, "data": {"items": []}},
+            status=200
+        )
+        responses.add(
+            responses.POST,
+            f"{base_url}/persons",
+            json={"success": True, "data": {"id": 123, "name": "Test Advisor"}},
+            status=200
+        )
+
+        # Mock organization creation
+        responses.add(
+            responses.GET,
+            f"{base_url}/organizations",
+            json={
+                "success": True,
+                "data": [],
+                "additional_data": {"pagination": {"more_items_in_collection": False}}
+            },
+            status=200
+        )
+        responses.add(
+            responses.POST,
+            f"{base_url}/organizations",
+            json={"success": True, "data": {"id": 456, "name": "Test Organization"}},
+            status=200
+        )
+
+        # Mock FAILED linking
+        responses.add(
+            responses.PUT,
+            f"{base_url}/persons/123",
+            json={"success": False, "error": "Linking failed"},
+            status=400
+        )
+
+        # Mock successful deal creation (should still happen)
+        responses.add(
+            responses.POST,
+            f"{base_url}/deals",
+            json={"success": True, "data": {"id": 789, "title": "Test Deal"}},
+            status=200
+        )
+
+        # Mock notes creation
+        responses.add(
+            responses.POST,
+            f"{base_url}/notes",
+            json={"success": True, "data": {"id": 999}},
+            status=200
+        )
+
+        result = mock_service.create_deal(sample_deal_data)
+
+        # Deal should still be created successfully even though linking failed
+        assert result is not None
+        assert result["id"] == 789

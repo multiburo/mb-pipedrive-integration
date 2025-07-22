@@ -343,6 +343,9 @@ class PipedriveService:
             if deal_data.organization:
                 organization = self.get_or_create_organization(deal_data.organization)
 
+            if advisor_person and organization:
+                self.link_person_to_organization(advisor_person["id"], organization["id"])
+
             # Prepare deal data
             pipedrive_deal_data = {
                 "title": deal_data.title,
@@ -525,3 +528,21 @@ class PipedriveService:
         except Exception as e:
             logger.error(f"❌ Error adding tags to deal {deal_id}: {e}")
             return False
+
+    def link_person_to_organization(self, person_id: int, organization_id: int) -> bool:
+        """Link a person to an organization in Pipedrive."""
+        try:
+            update_data = {"org_id": organization_id}
+            response = self._make_request("PUT", f"persons/{person_id}", update_data)
+
+            if response and "data" in response:
+                logger.info(f"✅ Linked person {person_id} to organization {organization_id}")
+                return True
+
+            logger.error(f"❌ Failed to link person {person_id} to organization {organization_id}")
+            return False
+
+        except Exception as e:
+            logger.error(f"❌ Error linking person to organization: {e}")
+            return False
+
