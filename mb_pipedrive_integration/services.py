@@ -3,6 +3,7 @@ import time
 from typing import Optional, Dict, Any, List, Union
 import requests
 
+from . import OrganizationData
 from .dataclasses import PipedriveConfig, DealData
 from .exceptions import PipedriveAPIError, PipedriveNetworkError, PipedriveConfigError
 
@@ -195,15 +196,24 @@ class PipedriveService:
 
         return self.create_person(name, email, phone, tags)
 
-    def create_organization(self, name: str) -> Optional[Dict[str, Any]]:
+    def create_organization(self, org_data: OrganizationData) -> Optional[Dict[str, Any]]:
         """Create an organization in Pipedrive"""
         try:
-            organization_data = {"name": name}
+            organization_data = {"name": org_data.name}
+
+            # Add custom fields if provided
+            if org_data.custom_fields and self.config.custom_fields:
+                for field_key, field_value in org_data.custom_fields.items():
+                    # Map field key to Pipedrive custom field hash
+                    pipedrive_field_key = self.config.custom_fields.get(f"org_{field_key}")
+                    if pipedrive_field_key:
+                        organization_data[pipedrive_field_key] = field_value
+
             response = self._make_request("POST", "organizations", organization_data)
 
-            if response and response.get("success"):
+            if response and "data" in response:
                 organization = response["data"]
-                logger.info(f"Organization created in Pipedrive: {name} (ID: {organization['id']})")
+                logger.info(f"Organization created in Pipedrive: {org_data.name} (ID: {organization['id']})")
                 return organization
             else:
                 logger.error(f"Failed to create organization in Pipedrive: {response}")
@@ -225,12 +235,77 @@ class PipedriveService:
             logger.error(f"Error finding organization by name in Pipedrive: {e}")
             return None
 
-    def get_or_create_organization(self, name: str) -> Optional[Dict[str, Any]]:
+    def find_organization_by_custom_field(self, field_key: str, field_value: str) -> Optional[Dict[str, Any]]:
+        """
+        Find an organization by any custom field value.
+
+        Args:
+            field_key: The custom field key (e.g., 'mb_id', 'external_id', 'uuid')
+            field_value: The value to search for
+
+        Returns:
+            Organization dict if found, None otherwise
+        """
+        try:
+            if not self.config.custom_fields:
+                logger.warning("No custom fields configured")
+                return None
+
+            # Map the field key to Pipedrive's custom field hash
+            pipedrive_field_key = self.config.custom_fields.get(f"org_{field_key}")
+            if not pipedrive_field_key:
+                logger.warning(f"No mapping found for custom field 'org_{field_key}'")
+                return None
+
+            # Use pagination for better performance
+            start = 0
+            limit = 100  # Pipedrive's recommended limit
+
+            while True:
+                response = self._make_request("GET", f"organizations?start={start}&limit={limit}")
+                if not response or "data" not in response:
+                    break
+
+                organizations = response["data"]
+                if not organizations:  # No more data
+                    break
+
+                # Search through this batch
+                for org in organizations:
+                    if org.get(pipedrive_field_key) == field_value:
+                        logger.info(
+                            f"Found organization by {field_key}={field_value}: {org.get('name')} (ID: {org.get('id')})")
+                        return org
+
+                # Check if there are more pages
+                additional_data = response.get("additional_data", {})
+                pagination = additional_data.get("pagination", {})
+                if not pagination.get("more_items_in_collection", False):
+                    break
+
+                start += limit
+
+            logger.info(f"No organization found with {field_key}={field_value}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error finding organization by {field_key}={field_value}: {e}")
+            return None
+
+    def find_organization_by_mb_id(self, mb_id: str) -> Optional[Dict[str, Any]]:
+        """Find organization by Multiburo ID"""
+        return self.find_organization_by_custom_field("mb_id", mb_id)
+
+    def get_or_create_organization(self, org_data: OrganizationData) -> Optional[Dict[str, Any]]:
         """Get existing organization or create new one"""
-        organization = self.find_organization_by_name(name)
-        if organization:
-            return organization
-        return self.create_organization(name)
+
+        if org_data.custom_fields and "mb_id" in org_data.custom_fields:
+            mb_id = org_data.custom_fields["mb_id"]
+            existing_org = self.find_organization_by_mb_id(mb_id)
+            if existing_org:
+                return existing_org
+
+        return self.create_organization(org_data)
 
     def create_deal(self, deal_data: DealData) -> Optional[Dict[str, Any]]:
         """Create a deal in Pipedrive based on deal data"""
@@ -266,7 +341,10 @@ class PipedriveService:
             # Create or get organization
             organization = None
             if deal_data.organization:
-                organization = self.get_or_create_organization(deal_data.organization.name)
+                organization = self.get_or_create_organization(deal_data.organization)
+
+            if advisor_person and organization:
+                self.link_person_to_organization(advisor_person["id"], organization["id"])
 
             # Prepare deal data
             pipedrive_deal_data = {
@@ -450,3 +528,21 @@ class PipedriveService:
         except Exception as e:
             logger.error(f"❌ Error adding tags to deal {deal_id}: {e}")
             return False
+
+    def link_person_to_organization(self, person_id: int, organization_id: int) -> bool:
+        """Link a person to an organization in Pipedrive."""
+        try:
+            update_data = {"org_id": organization_id}
+            response = self._make_request("PUT", f"persons/{person_id}", update_data)
+
+            if response and "data" in response:
+                logger.info(f"✅ Linked person {person_id} to organization {organization_id}")
+                return True
+
+            logger.error(f"❌ Failed to link person {person_id} to organization {organization_id}")
+            return False
+
+        except Exception as e:
+            logger.error(f"❌ Error linking person to organization: {e}")
+            return False
+

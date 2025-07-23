@@ -77,6 +77,43 @@ class TestOrganizationData:
             OrganizationData(name="   ")
 
 
+class TestOrganizationDataWithCustomFields:
+    """Test OrganizationData with custom fields support"""
+
+    def test_organization_with_custom_fields(self):
+        """Test creating organization with custom fields"""
+        org = OrganizationData(
+            name="Test Org",
+            custom_fields={"mb_id": "test-uuid-123", "external_id": "ext-456"}
+        )
+
+        assert org.name == "Test Org"
+        assert org.custom_fields["mb_id"] == "test-uuid-123"
+        assert org.custom_fields["external_id"] == "ext-456"
+
+    def test_organization_without_custom_fields(self):
+        """Test creating organization without custom fields"""
+        org = OrganizationData(name="Simple Org")
+
+        assert org.name == "Simple Org"
+        assert org.custom_fields is None
+
+    def test_organization_with_empty_custom_fields(self):
+        """Test creating organization with empty custom fields dict"""
+        org = OrganizationData(name="Empty Fields Org", custom_fields={})
+
+        assert org.name == "Empty Fields Org"
+        assert org.custom_fields == {}
+
+    def test_organization_name_validation_still_works(self):
+        """Test that name validation still works with custom fields"""
+        with pytest.raises(PipedriveValidationError, match="Organization name cannot be empty"):
+            OrganizationData(name="", custom_fields={"mb_id": "test"})
+
+        with pytest.raises(PipedriveValidationError, match="Organization name cannot be empty"):
+            OrganizationData(name="   ", custom_fields={"mb_id": "test"})
+
+
 class TestDealData:
     """Test DealData validation"""
 
