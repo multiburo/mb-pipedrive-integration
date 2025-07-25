@@ -5,6 +5,7 @@ from mb_pipedrive_integration.dataclasses import (
     PersonData,
     OrganizationData,
     DealData,
+    ProductData,
     PipedriveConfig,
 )
 from mb_pipedrive_integration.exceptions import PipedriveConfigError, PipedriveValidationError
@@ -283,6 +284,7 @@ class TestPipedriveConfig:
             "PIPEDRIVE_DEFAULT_PIPELINE_ID": "7",
             "PIPEDRIVE_DEFAULT_STAGE_ID": "14",
             "PIPEDRIVE_CUSTOM_FIELDS": {"test": "field"},
+            "PIPEDRIVE_PRODUCT_MAPPINGS": {"product_1": {"id": 1, "name": "Test Product 1", "price": 100}},
         }
 
         config = PipedriveConfig.from_django_settings()
@@ -311,3 +313,80 @@ class TestPipedriveConfig:
 
         with pytest.raises(PipedriveConfigError, match="Missing required Django settings"):
             PipedriveConfig.from_django_settings()
+
+
+class TestProductData:
+    """Test ProductData dataclass validation and functionality"""
+
+    def test_valid_product_data(self):
+        """Test creating valid product data"""
+        product = ProductData(
+            product_id=123,
+            quantity=2,
+            item_price=99.99,
+            comments="Test product",
+            tax=10.0,
+            discount=5.0,
+            discount_type="percentage"
+        )
+
+        assert product.product_id == 123
+        assert product.quantity == 2
+        assert product.item_price == 99.99
+        assert product.comments == "Test product"
+        assert product.tax == 10.0
+        assert product.discount == 5.0
+        assert product.discount_type == "percentage"
+
+    def test_minimal_product_data(self):
+        """Test product with only required fields"""
+        product = ProductData(product_id=456)
+
+        assert product.product_id == 456
+        assert product.quantity == 1  # Default
+        assert product.item_price is None  # Default
+        assert product.comments is None  # Default
+        assert product.tax == 0  # Default
+        assert product.discount == 0  # Default
+        assert product.discount_type == "percentage"  # Default
+
+    def test_product_data_with_amount_discount(self):
+        """Test product with amount-based discount"""
+        product = ProductData(
+            product_id=789,
+            discount=50.0,
+            discount_type="amount"
+        )
+
+        assert product.discount == 50.0
+        assert product.discount_type == "amount"
+
+    def test_zero_product_id_raises_error(self):
+        """Test that zero product ID raises validation error"""
+        with pytest.raises(ValueError, match="Product ID must be positive"):
+            ProductData(product_id=0)
+
+    def test_negative_product_id_raises_error(self):
+        """Test that negative product ID raises validation error"""
+        with pytest.raises(ValueError, match="Product ID must be positive"):
+            ProductData(product_id=-1)
+
+    def test_negative_quantity_raises_error(self):
+        """Test that negative quantity raises validation error"""
+        with pytest.raises(ValueError, match="Quantity must be positive"):
+            ProductData(product_id=123, quantity=-1)
+
+    def test_zero_quantity_raises_error(self):
+        """Test that zero quantity raises validation error"""
+        with pytest.raises(ValueError, match="Quantity must be positive"):
+            ProductData(product_id=123, quantity=0)
+
+    def test_negative_item_price_raises_error(self):
+        """Test that negative item price raises validation error"""
+        with pytest.raises(ValueError, match="Item price cannot be negative"):
+            ProductData(product_id=123, item_price=-10.0)
+
+    def test_invalid_discount_type_raises_error(self):
+        """Test that invalid discount type raises validation error"""
+        with pytest.raises(ValueError, match="Discount type must be 'percentage' or 'amount'"):
+            ProductData(product_id=123, discount_type="invalid")

@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any, List, Union
 import requests
 
 from . import OrganizationData
-from .dataclasses import PipedriveConfig, DealData
+from .dataclasses import PipedriveConfig, DealData, ProductData
 from .exceptions import PipedriveAPIError, PipedriveNetworkError, PipedriveConfigError
 
 logger = logging.getLogger(__name__)
@@ -546,3 +546,102 @@ class PipedriveService:
             logger.error(f"❌ Error linking person to organization: {e}")
             return False
 
+    def attach_product_to_deal(
+            self,
+            deal_id: int,
+            product_id: int,
+            quantity: int = 1,
+            item_price: Optional[float] = None,
+            comments: Optional[str] = None,
+            tax: float = 0,
+            discount: float = 0,
+            discount_type: str = "percentage"
+    ) -> bool:
+        """
+        Attach a product to a deal
+        If item_price is None, will fetch the product's default price
+        """
+        try:
+            # If no price provided, get product's default price
+            if item_price is None:
+                item_price = self._get_product_default_price(product_id)
+                if item_price is None:
+                    logger.error(f"Could not determine price for product {product_id}")
+                    return False
+
+            product_data = {
+                "product_id": product_id,
+                "item_price": item_price,
+                "quantity": quantity,
+                "tax": tax,
+                "discount": discount,
+                "discount_type": discount_type
+            }
+
+            if comments:
+                product_data["comments"] = comments
+
+            response = self._make_request("POST", f"deals/{deal_id}/products", product_data)
+
+            if response and "data" in response:
+                logger.info(f"✅ Attached product {product_id} to deal {deal_id} at price {item_price}")
+                return True
+            return False
+
+        except Exception as e:
+            logger.error(f"❌ Error attaching product {product_id} to deal {deal_id}: {e}")
+            return False
+
+    def attach_multiple_products_to_deal(
+            self,
+            deal_id: int,
+            products: List[ProductData]
+    ) -> Dict[str, Any]:
+        """
+        Attach multiple products to a deal
+        Returns summary of success/failure for each product
+        """
+        results = {
+            "successful": [],
+            "failed": [],
+            "total_attempted": len(products),
+            "success_count": 0,
+            "failure_count": 0
+        }
+
+        for product_attachment in products:
+            success = self.attach_product_to_deal(
+                deal_id=deal_id,
+                product_id=product_attachment.product_id,
+                quantity=product_attachment.quantity,
+                item_price=product_attachment.item_price,
+                comments=product_attachment.comments,
+                tax=product_attachment.tax,
+                discount=product_attachment.discount,
+                discount_type=product_attachment.discount_type
+            )
+
+            if success:
+                results["successful"].append(product_attachment.product_id)
+                results["success_count"] += 1
+            else:
+                results["failed"].append(product_attachment.product_id)
+                results["failure_count"] += 1
+
+        logger.info(
+            f"📊 Batch attachment to deal {deal_id}: {results['success_count']}/{results['total_attempted']} successful")
+        return results
+
+    def _get_product_default_price(self, product_id: int) -> Optional[float]:
+        """Get the default price for a product"""
+        try:
+            response = self._make_request("GET", f"products/{product_id}")
+            if response and "data" in response:
+                product_data = response["data"]
+                prices = product_data.get("prices", [])
+                if prices and len(prices) > 0:
+                    return float(prices[0].get("price", 0))
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching product {product_id} default price: {e}")
+            return None

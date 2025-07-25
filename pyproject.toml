@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mb-pipedrive-integration"
-version = "1.0.4"
+version = "1.0.5"
 description = "Multiburo Pipedrive integration for Django applications"
 authors = [
     {name = "Multiburo", email = "gerardo.gornes@multiburo.com"}
