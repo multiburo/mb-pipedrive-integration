@@ -6,7 +6,7 @@ Provides clean abstractions for creating deals, managing persons,
 and synchronizing data between Django applications and Pipedrive.
 """
 
-from .dataclasses import PersonData, OrganizationData, DealData, PipedriveConfig
+from .dataclasses import PersonData, OrganizationData, DealData, ProductData, PipedriveConfig
 from .services import PipedriveService
 from .exceptions import (
     PipedriveError,
@@ -16,7 +16,7 @@ from .exceptions import (
     PipedriveValidationError,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.0.5"
 __author__ = "Multiburo"
 __email__ = "gerardo.gornes@multiburo.com"
 
@@ -28,6 +28,7 @@ __all__ = [
     "PersonData",
     "OrganizationData",
     "DealData",
+    "ProductData",
     # Exceptions
     "PipedriveError",
     "PipedriveAPIError",
