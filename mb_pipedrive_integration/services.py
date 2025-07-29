@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any, List, Union
 import requests
 
 from . import OrganizationData
-from .dataclasses import PipedriveConfig, DealData, ProductData
+from .dataclasses import PipedriveConfig, DealData, ProductData, PersonData
 from .exceptions import PipedriveAPIError, PipedriveNetworkError, PipedriveConfigError
 
 logger = logging.getLogger(__name__)
@@ -644,4 +644,48 @@ class PipedriveService:
             return None
         except Exception as e:
             logger.error(f"Error fetching product {product_id} default price: {e}")
+            return None
+
+    def update_person(self, person_id: int, person_data: PersonData) -> Optional[Dict[str, Any]]:
+        """
+        Update an existing person in Pipedrive
+
+        Args:
+            person_id: The Pipedrive person ID to update
+            person_data: PersonData containing the updated information
+
+        Returns:
+            Updated person data from Pipedrive API, or None if failed
+        """
+        try:
+            # Prepare update data
+            update_data = {
+                "name": person_data.name
+            }
+
+            if person_data.email:
+                update_data["email"] = person_data.email
+
+            if person_data.phone:
+                update_data["phone"] = person_data.phone
+
+            if person_data.tags:
+                # Convert tags to comma-separated string
+                if isinstance(person_data.tags, list):
+                    update_data["label"] = ",".join(person_data.tags)
+                else:
+                    update_data["label"] = person_data.tags
+
+            # Make the update request
+            response = self._make_request("PUT", f"persons/{person_id}", update_data)
+
+            if response and response.get("success"):
+                logger.info(f"Successfully updated person {person_id} in Pipedrive")
+                return response.get("data")
+            else:
+                logger.error(f"Failed to update person {person_id} in Pipedrive: {response}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error updating person {person_id} in Pipedrive: {e}")
             return None

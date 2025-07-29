@@ -2269,3 +2269,287 @@ class TestProductMethodsExhaustive:
                 discount_type="invalid"
             )
 
+    @responses.activate
+    def test_update_person_success(self, mock_service):
+        """Test successful person update"""
+        person_id = 123
+
+        # Mock successful update response
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": person_id,
+                    "name": "Updated Name",
+                    "email": [{"value": "updated@example.com", "primary": True}],
+                    "phone": [{"value": "+1234567890", "primary": True}],
+                    "label": "INQUILINO,NEW_TAG"
+                }
+            },
+            status=200
+        )
+
+        # Create person data to update
+        person_data = PersonData(
+            name="Updated Name",
+            email="updated@example.com",
+            phone="+1234567890",
+            tags=["INQUILINO", "NEW_TAG"]
+        )
+
+        result = mock_service.update_person(person_id, person_data)
+
+        # Verify result
+        assert result is not None
+        assert result["id"] == person_id
+        assert result["name"] == "Updated Name"
+
+        # Verify the request was made correctly
+        assert len(responses.calls) == 1
+        request_body = json.loads(responses.calls[0].request.body)
+        assert request_body["name"] == "Updated Name"
+        assert request_body["email"] == "updated@example.com"
+        assert request_body["phone"] == "+1234567890"
+        assert request_body["label"] == "INQUILINO,NEW_TAG"
+
+    @responses.activate
+    def test_update_person_minimal_data(self, mock_service):
+        """Test updating person with minimal data (only name)"""
+        person_id = 456
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": person_id,
+                    "name": "Minimal Name"
+                }
+            },
+            status=200
+        )
+
+        # Person data with only name
+        person_data = PersonData(name="Minimal Name")
+
+        result = mock_service.update_person(person_id, person_data)
+
+        assert result is not None
+        assert result["id"] == person_id
+
+        # Verify only name was sent
+        request_body = json.loads(responses.calls[0].request.body)
+        assert request_body["name"] == "Minimal Name"
+        assert "email" not in request_body
+        assert "phone" not in request_body
+        assert "label" not in request_body
+
+    @responses.activate
+    def test_update_person_with_string_tags(self, mock_service):
+        """Test updating person with tags as string instead of list"""
+        person_id = 789
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={"success": True, "data": {"id": person_id}},
+            status=200
+        )
+
+        # Person data with string tags
+        person_data = PersonData(
+            name="String Tags Person",
+            tags="ASESOR INMOBILIARIO"  # String instead of list
+        )
+
+        result = mock_service.update_person(person_id, person_data)
+
+        assert result is not None
+
+        # Verify string tags are handled correctly
+        request_body = json.loads(responses.calls[0].request.body)
+        assert request_body["label"] == "ASESOR INMOBILIARIO"
+
+    @responses.activate
+    def test_update_person_empty_optional_fields(self, mock_service):
+        """Test that empty/None optional fields are not included in request"""
+        person_id = 999
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={"success": True, "data": {"id": person_id}},
+            status=200
+        )
+
+        # Person data with None/empty optional fields
+        person_data = PersonData(
+            name="Test Person",
+            email=None,  # None
+            phone="",  # Empty string
+            tags=[]  # Empty list
+        )
+
+        result = mock_service.update_person(person_id, person_data)
+
+        assert result is not None
+
+        # Verify empty fields are not included
+        request_body = json.loads(responses.calls[0].request.body)
+        assert request_body["name"] == "Test Person"
+        assert "email" not in request_body
+        assert "phone" not in request_body
+        assert "label" not in request_body
+
+    @responses.activate
+    def test_update_person_api_failure(self, mock_service):
+        """Test person update when API returns failure"""
+        person_id = 111
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={
+                "success": False,
+                "error": "Person not found"
+            },
+            status=200
+        )
+
+        person_data = PersonData(name="Failed Update")
+
+        result = mock_service.update_person(person_id, person_data)
+
+        assert result is None
+
+    @responses.activate
+    def test_update_person_http_error(self, mock_service):
+        """Test person update with HTTP error status"""
+        person_id = 222
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={"error": "Not found"},
+            status=404
+        )
+
+        person_data = PersonData(name="HTTP Error Test")
+
+        result = mock_service.update_person(person_id, person_data)
+
+        assert result is None
+
+    @responses.activate
+    def test_update_person_network_error(self, mock_service):
+        """Test person update with network error"""
+        person_id = 333
+
+        # Don't add any responses to simulate network error
+
+        person_data = PersonData(name="Network Error Test")
+
+        result = mock_service.update_person(person_id, person_data)
+
+        assert result is None
+
+    @responses.activate
+    def test_update_person_advisor_with_client_type_tags(self, mock_service):
+        """Test updating advisor with specific client type tags"""
+        person_id = 444
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={"success": True, "data": {"id": person_id}},
+            status=200
+        )
+
+        # Advisor person data
+        person_data = PersonData(
+            name="Advisor Person",
+            email="advisor@example.com",
+            phone="+5551234567",
+            tags=["ASESOR INDEPENDIENTE"]
+        )
+
+        result = mock_service.update_person(person_id, person_data)
+
+        assert result is not None
+
+        # Verify advisor-specific tag
+        request_body = json.loads(responses.calls[0].request.body)
+        assert request_body["label"] == "ASESOR INDEPENDIENTE"
+
+    @responses.activate
+    def test_update_person_multiple_tags(self, mock_service):
+        """Test updating person with multiple tags"""
+        person_id = 555
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={"success": True, "data": {"id": person_id}},
+            status=200
+        )
+
+        person_data = PersonData(
+            name="Multi Tag Person",
+            tags=["INQUILINO", "MULTIREPORTE", "PREMIUM"]
+        )
+
+        result = mock_service.update_person(person_id, person_data)
+
+        assert result is not None
+
+        # Verify multiple tags are joined correctly
+        request_body = json.loads(responses.calls[0].request.body)
+        assert request_body["label"] == "INQUILINO,MULTIREPORTE,PREMIUM"
+
+    @responses.activate
+    def test_update_person_email_change_scenario(self, mock_service):
+        """Test updating person in email change scenario"""
+        person_id = 666
+
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/{person_id}",
+            json={
+                "success": True,
+                "data": {
+                    "id": person_id,
+                    "name": "Email Change Person",
+                    "email": [{"value": "newemail@example.com", "primary": True}]
+                }
+            },
+            status=200
+        )
+
+        # Person data with new email
+        person_data = PersonData(
+            name="Email Change Person",
+            email="newemail@example.com",
+            phone="+5551234567"
+        )
+
+        result = mock_service.update_person(person_id, person_data)
+
+        assert result is not None
+        assert result["id"] == person_id
+
+        # Verify new email was sent
+        request_body = json.loads(responses.calls[0].request.body)
+        assert request_body["email"] == "newemail@example.com"
+
+    def test_update_person_invalid_person_data(self, mock_service):
+        """Test update_person with invalid PersonData"""
+        from mb_pipedrive_integration.exceptions import PipedriveValidationError
+
+        # This should be caught by PersonData validation, but test the method's robustness
+
+        # Mock PersonData with empty name (should be caught by __post_init__)
+        with pytest.raises(PipedriveValidationError):
+            PersonData(name="")  # This should raise PipedriveValidationError in __post_init__
