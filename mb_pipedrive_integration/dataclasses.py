@@ -12,7 +12,7 @@ class PersonData:
     email: Optional[str] = None
     phone: Optional[str] = None
     tags: Optional[Union[str, List[str]]] = None
-    custom_fields: Optional[Dict[str, any]] = None  # For custom fields like birthdate
+    custom_fields: Optional[Dict[str, any]] = None
 
     def __post_init__(self) -> None:
         if not self.name or not self.name.strip():
