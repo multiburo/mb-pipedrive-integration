@@ -132,9 +132,10 @@ class PipedriveService:
             name: str,
             email: Optional[str] = None,
             phone: Optional[str] = None,
-            tags: Optional[Union[str, List[str]]] = None
+            tags: Optional[Union[str, List[str]]] = None,
+            custom_fields: Optional[Dict[str, any]] = None
     ) -> Optional[Dict[str, Any]]:
-        """Create a person in Pipedrive with optional tags"""
+        """Create a person in Pipedrive with optional tags and custom fields"""
         try:
             person_data = {
                 "name": name,
@@ -148,6 +149,14 @@ class PipedriveService:
             # Add tags if provided
             if tags:
                 person_data["label"] = ",".join(tags)
+
+            # Add custom fields if provided (following organization pattern)
+            if custom_fields and self.config.custom_fields:
+                for field_key, field_value in custom_fields.items():
+                    # Map field key to Pipedrive custom field hash
+                    pipedrive_field_key = self.config.custom_fields.get(f"person_{field_key}")
+                    if pipedrive_field_key:
+                        person_data[pipedrive_field_key] = field_value
 
             response = self._make_request("POST", "persons", person_data)
 
@@ -186,15 +195,16 @@ class PipedriveService:
             name: str,
             email: Optional[str] = None,
             phone: Optional[str] = None,
-            tags: Optional[Union[str, List[str]]] = None
+            tags: Optional[Union[str, List[str]]] = None,
+            custom_fields: Optional[Dict[str, any]] = None
     ) -> Optional[Dict[str, Any]]:
-        """Get existing person or create new one with optional tags"""
+        """Get existing person or create new one with optional tags and custom fields"""
         if email:
             person = self.find_person_by_email(email)
             if person:
                 return person
 
-        return self.create_person(name, email, phone, tags)
+        return self.create_person(name, email, phone, tags, custom_fields)
 
     def create_organization(self, org_data: OrganizationData) -> Optional[Dict[str, Any]]:
         """Create an organization in Pipedrive"""
@@ -317,7 +327,8 @@ class PipedriveService:
                     name=deal_data.tenant.name,
                     email=deal_data.tenant.email,
                     phone=deal_data.tenant.phone,
-                    tags=deal_data.tenant.tags
+                    tags=deal_data.tenant.tags,
+                    custom_fields=deal_data.tenant.custom_fields
                 )
 
             advisor_person = None
@@ -326,7 +337,8 @@ class PipedriveService:
                     name=deal_data.advisor.name,
                     email=deal_data.advisor.email,
                     phone=deal_data.advisor.phone,
-                    tags=deal_data.advisor.tags
+                    tags=deal_data.advisor.tags,
+                    custom_fields=deal_data.advisor.custom_fields
                 )
 
             landlord_person = None
@@ -335,7 +347,8 @@ class PipedriveService:
                     name=deal_data.landlord.name,
                     email=deal_data.landlord.email,
                     phone=deal_data.landlord.phone,
-                    tags=deal_data.landlord.tags
+                    tags=deal_data.landlord.tags,
+                    custom_fields=deal_data.landlord.custom_fields
                 )
 
             # Create or get organization
