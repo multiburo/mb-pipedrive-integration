@@ -150,10 +150,8 @@ class PipedriveService:
             if tags:
                 person_data["label"] = ",".join(tags)
 
-            # Add custom fields if provided (following organization pattern)
             if custom_fields and self.config.custom_fields:
                 for field_key, field_value in custom_fields.items():
-                    # Map field key to Pipedrive custom field hash
                     pipedrive_field_key = self.config.custom_fields.get(f"person_{field_key}")
                     if pipedrive_field_key:
                         person_data[pipedrive_field_key] = field_value
