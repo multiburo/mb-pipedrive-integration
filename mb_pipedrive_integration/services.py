@@ -700,3 +700,133 @@ class PipedriveService:
         except Exception as e:
             logger.error(f"Error updating person {person_id} in Pipedrive: {e}")
             return None
+
+    def get_users(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        Get all Pipedrive users
+
+        Returns:
+            List of user dicts from Pipedrive API, or None if failed
+        """
+        try:
+            response = self._make_request("GET", "users")
+
+            if response and response.get("success"):
+                users = response.get("data", [])
+                logger.info(f"Retrieved {len(users)} Pipedrive users")
+                return users
+            else:
+                logger.error(f"Failed to get Pipedrive users: {response}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error getting Pipedrive users: {str(e)}")
+            return None
+
+    def find_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """
+        Find a Pipedrive user by email address
+
+        Args:
+            email: The email address to search for
+
+        Returns:
+            User dict if found, None otherwise
+        """
+        try:
+            if not email:
+                return None
+
+            users = self.get_users()
+            if not users:
+                return None
+
+            # Search for user with matching email
+            email_lower = email.lower().strip()
+            for user in users:
+                user_email = user.get("email", "").lower().strip()
+                if user_email == email_lower:
+                    logger.info(f"Found Pipedrive user: {user.get('name')} (ID: {user.get('id')}) for email {email}")
+                    return user
+
+            logger.warning(f"No Pipedrive user found with email: {email}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error finding user by email {email}: {str(e)}")
+            return None
+
+    def create_activity(
+            self,
+            subject: str,
+            activity_type: str,
+            due_date: Optional[str] = None,
+            due_time: Optional[str] = None,
+            duration: Optional[str] = None,
+            deal_id: Optional[int] = None,
+            person_id: Optional[int] = None,
+            user_id: Optional[int] = None,
+            note: Optional[str] = None,
+            **kwargs
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Create an activity (task, call, meeting, etc.) in Pipedrive
+
+        Args:
+            subject: The subject/title of the activity
+            activity_type: The type of activity (e.g., 'task', 'call', 'meeting')
+            due_date: Due date in YYYY-MM-DD format
+            due_time: Due time in HH:MM format
+            duration: Duration in HH:MM format
+            deal_id: ID of the deal this activity is related to
+            person_id: ID of the person this activity is related to
+            user_id: ID of the Pipedrive user this activity is assigned to
+            note: Additional notes for the activity
+            **kwargs: Additional fields to include in the activity
+
+        Returns:
+            Created activity data from Pipedrive API, or None if failed
+        """
+        try:
+            activity_data = {
+                "subject": subject,
+                "type": activity_type,
+            }
+
+            if due_date:
+                activity_data["due_date"] = due_date
+
+            if due_time:
+                activity_data["due_time"] = due_time
+
+            if duration:
+                activity_data["duration"] = duration
+
+            if deal_id:
+                activity_data["deal_id"] = deal_id
+
+            if person_id:
+                activity_data["person_id"] = person_id
+
+            if user_id:
+                activity_data["user_id"] = user_id
+
+            if note:
+                activity_data["note"] = note
+
+            # Add any additional fields from kwargs
+            activity_data.update(kwargs)
+
+            response = self._make_request("POST", "activities", activity_data)
+
+            if response and response.get("success"):
+                activity = response["data"]
+                logger.info(f"Activity created in Pipedrive: {subject} (ID: {activity['id']})")
+                return activity
+            else:
+                logger.error(f"Failed to create activity in Pipedrive: {response}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error creating activity in Pipedrive: {str(e)}")
+            return None
