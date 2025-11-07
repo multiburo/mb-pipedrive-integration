@@ -204,11 +204,12 @@ class PipedriveService:
             person = self.find_person_by_email(email)
             if person:
                 # Person exists - update them with current data
+                # NOTE: Don't update tags on existing persons - only set them during creation
                 person_data = PersonData(
                     name=name,
                     email=email,
                     phone=phone,
-                    tags=tags,
+                    tags=None,  # Preserve existing tags
                     custom_fields=custom_fields
                 )
                 updated_person = self.update_person(person["id"], person_data)
