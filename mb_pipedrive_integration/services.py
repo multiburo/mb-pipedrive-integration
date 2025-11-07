@@ -196,11 +196,23 @@ class PipedriveService:
             tags: Optional[Union[str, List[str]]] = None,
             custom_fields: Optional[Dict[str, any]] = None
     ) -> Optional[Dict[str, Any]]:
-        """Get existing person or create new one with optional tags and custom fields"""
+        """
+        Get existing person or create new one with optional tags and custom fields.
+        If person exists, updates their data to ensure it's current.
+        """
         if email:
             person = self.find_person_by_email(email)
             if person:
-                return person
+                # Person exists - update them with current data
+                person_data = PersonData(
+                    name=name,
+                    email=email,
+                    phone=phone,
+                    tags=tags,
+                    custom_fields=custom_fields
+                )
+                updated_person = self.update_person(person["id"], person_data)
+                return updated_person if updated_person else person
 
         return self.create_person(name, email, phone, tags, custom_fields)
 
@@ -686,6 +698,13 @@ class PipedriveService:
                     update_data["label"] = ",".join(person_data.tags)
                 else:
                     update_data["label"] = person_data.tags
+
+            # Add custom fields if provided
+            if person_data.custom_fields and self.config.custom_fields:
+                for field_key, field_value in person_data.custom_fields.items():
+                    pipedrive_field_key = self.config.custom_fields.get(f"person_{field_key}")
+                    if pipedrive_field_key:
+                        update_data[pipedrive_field_key] = field_value
 
             # Make the update request
             response = self._make_request("PUT", f"persons/{person_id}", update_data)
