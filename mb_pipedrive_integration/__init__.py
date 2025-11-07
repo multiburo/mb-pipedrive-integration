@@ -16,7 +16,7 @@ from .exceptions import (
     PipedriveValidationError,
 )
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 __author__ = "Multiburo"
 __email__ = "gerardo.gornes@multiburo.com"
 
