@@ -78,6 +78,7 @@ class DealData:
     tenant: Optional[PersonData] = None
     advisor: Optional[PersonData] = None
     landlord: Optional[PersonData] = None
+    guarantor: Optional[PersonData] = None
     organization: Optional[OrganizationData] = None
     property_address: Optional[str] = None
     multiexpediente_url: Optional[str] = None

@@ -362,6 +362,16 @@ class PipedriveService:
                     custom_fields=deal_data.landlord.custom_fields
                 )
 
+            guarantor_person = None
+            if deal_data.guarantor:
+                guarantor_person = self.get_or_create_person(
+                    name=deal_data.guarantor.name,
+                    email=deal_data.guarantor.email,
+                    phone=deal_data.guarantor.phone,
+                    tags=deal_data.guarantor.tags,
+                    custom_fields=deal_data.guarantor.custom_fields
+                )
+
             # Create or get organization
             organization = None
             if deal_data.organization:
@@ -399,6 +409,9 @@ class PipedriveService:
 
             if custom_fields.get("tenant_person") and tenant_person:
                 pipedrive_deal_data[custom_fields["tenant_person"]] = tenant_person["id"]
+
+            if custom_fields.get("guarantor_person") and guarantor_person:
+                pipedrive_deal_data[custom_fields["guarantor_person"]] = guarantor_person["id"]
 
             if custom_fields.get("multiexpediente_url") and deal_data.multiexpediente_url:
                 pipedrive_deal_data[custom_fields["multiexpediente_url"]] = deal_data.multiexpediente_url
