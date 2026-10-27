@@ -1,6 +1,8 @@
 import logging
 import time
 from typing import Optional, Dict, Any, List, Union
+from urllib.parse import urlencode
+
 import requests
 
 from . import OrganizationData
@@ -173,20 +175,118 @@ class PipedriveService:
             logger.error(f"Unexpected error creating person in Pipedrive: {str(e)}")
             return None
 
-    def find_person_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        """Find a person by email in Pipedrive"""
-        try:
-            response = self._make_request("GET", f"persons/search?term={email}&search_by_email=1")
-            if response and response.get("data", {}).get("items"):
-                # Pipedrive search returns items wrapped in 'item' objects
-                return response["data"]["items"][0]["item"]
+    @staticmethod
+    def _normalize_email(email: Optional[str]) -> str:
+        return (email or "").strip().lower()
+
+    @staticmethod
+    def _phone_key(phone: Optional[str]) -> str:
+        """Comparable form of a phone: digits only, last 10 (drops +52 / the mobile 1). Empty if too short to trust."""
+        digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+        return digits[-10:] if len(digits) >= 10 else ""
+
+    @staticmethod
+    def _contact_values(entries: Any) -> List[str]:
+        """Values of an emails/phones field; search returns plain strings or {'value': ...} depending on the endpoint."""
+        values = []
+        for entry in entries or []:
+            value = entry.get("value") if isinstance(entry, dict) else entry
+            if value:
+                values.append(str(value))
+        return values
+
+    def _search_persons(self, term: str, field: str, exact_match: bool) -> List[Dict[str, Any]]:
+        query = urlencode(
+            {"term": term, "fields": field, "exact_match": "true" if exact_match else "false", "limit": 20}
+        )
+        response = self._make_request("GET", f"persons/search?{query}")
+        items = ((response or {}).get("data") or {}).get("items") or []
+        return [entry["item"] for entry in items if entry.get("item")]
+
+    def _search_person_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Person whose email list contains exactly this email. Raises on API/network errors."""
+        wanted = self._normalize_email(email)
+        if not wanted:
             return None
+        for person in self._search_persons(wanted, "email", exact_match=True):
+            if wanted in {self._normalize_email(v) for v in self._contact_values(person.get("emails"))}:
+                return person
+        return None
+
+    def _search_person_by_phone(self, phone: str) -> Optional[Dict[str, Any]]:
+        """The only person holding this normalized phone, or None if there is none or it is shared."""
+        wanted = self._phone_key(phone)
+        if not wanted:
+            return None
+        # Stored phones come in mixed formats, so search loosely and compare normalized values ourselves
+        matches = {}
+        for person in self._search_persons(wanted, "phone", exact_match=False):
+            if wanted in {self._phone_key(v) for v in self._contact_values(person.get("phones"))}:
+                matches[person["id"]] = person
+        if len(matches) > 1:
+            logger.warning(f"Phone {wanted} is shared by persons {sorted(matches)}; not matching by phone")
+            return None
+        return next(iter(matches.values()), None)
+
+    def find_person_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Find a person by exact (case-insensitive) email in Pipedrive"""
+        try:
+            return self._search_person_by_email(email)
         except (PipedriveAPIError, PipedriveNetworkError) as e:
             logger.error(f"Error finding person by email in Pipedrive: {e}")
             return None
         except Exception as e:
             logger.error(f"Unexpected error finding person by email in Pipedrive: {e}")
             return None
+
+    def _merge_person_contact(
+            self,
+            person: Dict[str, Any],
+            email: Optional[str],
+            phone: Optional[str],
+            custom_fields: Optional[Dict[str, any]],
+    ) -> Dict[str, Any]:
+        """
+        Add the email/phone to an existing person's lists (never replacing them) and set custom fields.
+        The name and tags are left untouched. Returns the person as it stands afterwards.
+        """
+        person_id = person["id"]
+        try:
+            current = (self._make_request("GET", f"persons/{person_id}") or {}).get("data")
+        except (PipedriveAPIError, PipedriveNetworkError) as e:
+            logger.warning(f"Could not load person {person_id} to merge contact data, leaving it as is: {e}")
+            return person
+        if not current:
+            return person
+
+        update_data: Dict[str, Any] = {}
+        for field, new_value, key in (
+                ("email", email, self._normalize_email),
+                ("phone", phone, lambda v: self._phone_key(v) or str(v).strip()),
+        ):
+            entries = [e for e in (current.get(field) or []) if isinstance(e, dict) and e.get("value")]
+            if new_value and key(new_value) not in {key(e["value"]) for e in entries}:
+                entries.append({"value": new_value, "primary": not entries, "label": "work"})
+                update_data[field] = entries
+
+        if custom_fields and self.config.custom_fields:
+            for field_key, field_value in custom_fields.items():
+                pipedrive_field_key = self.config.custom_fields.get(f"person_{field_key}")
+                if pipedrive_field_key:
+                    update_data[pipedrive_field_key] = field_value
+
+        if not update_data:
+            return current
+
+        try:
+            response = self._make_request("PUT", f"persons/{person_id}", update_data)
+        except (PipedriveAPIError, PipedriveNetworkError) as e:
+            logger.error(f"Failed to merge contact data into person {person_id} in Pipedrive: {e}")
+            return current
+        if response and response.get("success"):
+            return response.get("data") or current
+        logger.error(f"Failed to merge contact data into person {person_id} in Pipedrive: {response}")
+        return current
 
     def get_or_create_person(
             self,
@@ -198,22 +298,25 @@ class PipedriveService:
     ) -> Optional[Dict[str, Any]]:
         """
         Get existing person or create new one with optional tags and custom fields.
-        If person exists, updates their data to ensure it's current.
+
+        A person matches only on an exact email or, when no email is given, on a phone that exactly
+        matches after normalization and belongs to a single person. Without a match a new person is
+        created; an existing one is never renamed, and its emails/phones are appended to, not replaced.
+        If the lookup itself fails, returns None rather than risk creating a duplicate.
         """
-        if email:
-            person = self.find_person_by_email(email)
-            if person:
-                # Person exists - update them with current data
-                # NOTE: Don't update tags on existing persons - only set them during creation
-                person_data = PersonData(
-                    name=name,
-                    email=email,
-                    phone=phone,
-                    tags=None,  # Preserve existing tags
-                    custom_fields=custom_fields
-                )
-                updated_person = self.update_person(person["id"], person_data)
-                return updated_person if updated_person else person
+        try:
+            if email:
+                person = self._search_person_by_email(email)
+            elif phone:
+                person = self._search_person_by_phone(phone)
+            else:
+                person = None
+        except Exception as e:
+            logger.error(f"Error looking up person '{name}' in Pipedrive, not creating a duplicate: {e}")
+            return None
+
+        if person:
+            return self._merge_person_contact(person, email, phone, custom_fields)
 
         return self.create_person(name, email, phone, tags, custom_fields)
 
