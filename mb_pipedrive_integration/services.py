@@ -200,7 +200,10 @@ class PipedriveService:
             {"term": term, "fields": field, "exact_match": "true" if exact_match else "false", "limit": 20}
         )
         response = self._make_request("GET", f"persons/search?{query}")
-        items = ((response or {}).get("data") or {}).get("items") or []
+        if response is None:
+            # _make_request returns None for a 2xx with success=false or a 3xx; that is not "nobody matches"
+            raise PipedriveAPIError("Person search returned no usable response")
+        items = (response.get("data") or {}).get("items") or []
         return [entry["item"] for entry in items if entry.get("item")]
 
     def _search_person_by_email(self, email: str) -> Optional[Dict[str, Any]]:
@@ -311,7 +314,7 @@ class PipedriveService:
                 person = self._search_person_by_phone(phone)
             else:
                 person = None
-        except Exception as e:
+        except (PipedriveAPIError, PipedriveNetworkError) as e:
             logger.error(f"Error looking up person '{name}' in Pipedrive, not creating a duplicate: {e}")
             return None
 
@@ -435,45 +438,10 @@ class PipedriveService:
         """Create a deal in Pipedrive based on deal data"""
         try:
             # Create or get persons with appropriate tags
-            tenant_person = None
-            if deal_data.tenant:
-                tenant_person = self.get_or_create_person(
-                    name=deal_data.tenant.name,
-                    email=deal_data.tenant.email,
-                    phone=deal_data.tenant.phone,
-                    tags=deal_data.tenant.tags,
-                    custom_fields=deal_data.tenant.custom_fields
-                )
-
-            advisor_person = None
-            if deal_data.advisor:
-                advisor_person = self.get_or_create_person(
-                    name=deal_data.advisor.name,
-                    email=deal_data.advisor.email,
-                    phone=deal_data.advisor.phone,
-                    tags=deal_data.advisor.tags,
-                    custom_fields=deal_data.advisor.custom_fields
-                )
-
-            landlord_person = None
-            if deal_data.landlord:
-                landlord_person = self.get_or_create_person(
-                    name=deal_data.landlord.name,
-                    email=deal_data.landlord.email,
-                    phone=deal_data.landlord.phone,
-                    tags=deal_data.landlord.tags,
-                    custom_fields=deal_data.landlord.custom_fields
-                )
-
-            guarantor_person = None
-            if deal_data.guarantor:
-                guarantor_person = self.get_or_create_person(
-                    name=deal_data.guarantor.name,
-                    email=deal_data.guarantor.email,
-                    phone=deal_data.guarantor.phone,
-                    tags=deal_data.guarantor.tags,
-                    custom_fields=deal_data.guarantor.custom_fields
-                )
+            tenant_person = self._person_for_deal("tenant", deal_data.tenant)
+            advisor_person = self._person_for_deal("advisor", deal_data.advisor)
+            landlord_person = self._person_for_deal("landlord", deal_data.landlord)
+            guarantor_person = self._person_for_deal("guarantor", deal_data.guarantor)
 
             # Create or get organization
             organization = None
@@ -534,9 +502,24 @@ class PipedriveService:
                 logger.error(f"Failed to create deal in Pipedrive: {response}")
                 return None
 
-        except Exception as e:
+        except (PipedriveAPIError, PipedriveNetworkError) as e:
             logger.error(f"Error creating deal in Pipedrive: {str(e)}")
             return None
+
+    def _person_for_deal(self, role: str, contact: Optional[PersonData]) -> Optional[Dict[str, Any]]:
+        """Resolve a deal participant; raises when it cannot, so a deal is never created missing one."""
+        if not contact:
+            return None
+        person = self.get_or_create_person(
+            name=contact.name,
+            email=contact.email,
+            phone=contact.phone,
+            tags=contact.tags,
+            custom_fields=contact.custom_fields,
+        )
+        if not person:
+            raise PipedriveAPIError(f"Could not find or create the {role} in Pipedrive; deal not created")
+        return person
 
     def _add_deal_notes(self, deal_id: int, deal_data: DealData) -> bool:
         """Add notes to the deal with additional information"""

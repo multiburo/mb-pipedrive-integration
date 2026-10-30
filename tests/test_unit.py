@@ -1,6 +1,7 @@
 import json
 import pytest
 import responses
+from unittest.mock import patch
 
 from mb_pipedrive_integration.dataclasses import PipedriveConfig
 from mb_pipedrive_integration.exceptions import PipedriveConfigError
@@ -531,7 +532,7 @@ def _person(person_id, name, emails=(), phones=()):
 
 
 class TestPersonExactMatching:
-    """get_or_create_person must never rewrite a person that is not exactly the same one (MB-664)"""
+    """get_or_create_person must never rewrite a person that is not exactly the same one """
 
     @staticmethod
     def _mock_search(service, items):
@@ -692,3 +693,34 @@ class TestPersonExactMatching:
 
         assert mock_service.get_or_create_person("Ana", "ana@x.com") is None
         assert "POST" not in self._methods()
+
+    @responses.activate
+    def test_unusable_search_response_does_not_create_a_duplicate(self, mock_service):
+        """2xx with success=false is not "nobody matches"; it must not end in a new person"""
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/persons/search",
+            json={"success": False},
+            status=200,
+        )
+
+        assert mock_service.get_or_create_person("Ana", "ana@x.com") is None
+        assert self._methods() == ["GET"]
+
+    @responses.activate
+    def test_deal_is_not_created_when_a_participant_lookup_fails(self, mock_service, sample_deal_data):
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/persons/search",
+            json={"success": False},
+            status=200,
+        )
+
+        assert mock_service.create_deal(sample_deal_data) is None
+        assert self._methods() == ["GET"]
+
+    @responses.activate
+    def test_unexpected_errors_are_not_swallowed_by_create_deal(self, mock_service, sample_deal_data):
+        with patch.object(mock_service, "get_or_create_person", side_effect=KeyError("bug")):
+            with pytest.raises(KeyError):
+                mock_service.create_deal(sample_deal_data)
