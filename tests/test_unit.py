@@ -4,7 +4,7 @@ import responses
 from unittest.mock import patch
 
 from mb_pipedrive_integration.dataclasses import PipedriveConfig
-from mb_pipedrive_integration.exceptions import PipedriveConfigError
+from mb_pipedrive_integration.exceptions import PipedriveAPIError, PipedriveConfigError
 from mb_pipedrive_integration.dataclasses import OrganizationData
 
 
@@ -754,3 +754,18 @@ class TestPersonExactMatching:
 
         assert result["id"] == 900
         assert self._methods() == ["POST"]
+
+    @responses.activate
+    def test_find_person_by_email_or_raise_tells_missing_from_failed(self, mock_service):
+        self._mock_search(mock_service, [])
+        assert mock_service.find_person_by_email_or_raise("ana@x.com") is None
+
+        responses.replace(
+            responses.GET,
+            f"{mock_service.base_url}/persons/search",
+            json={"success": False},
+            status=200,
+        )
+        with pytest.raises(PipedriveAPIError):
+            mock_service.find_person_by_email_or_raise("ana@x.com")
+        assert mock_service.find_person_by_email("ana@x.com") is None

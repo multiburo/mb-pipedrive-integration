@@ -221,6 +221,13 @@ class PipedriveService:
                 return person
         return None
 
+    def find_person_by_email_or_raise(self, email: str) -> Optional[Dict[str, Any]]:
+        """
+        Like find_person_by_email, but a failed lookup raises PipedriveAPIError / PipedriveNetworkError instead
+        of returning None, so "no such person" can be told apart from "could not check".
+        """
+        return self._search_person_by_email(email)
+
     def find_person_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """Find a person by exact (case-insensitive) email in Pipedrive"""
         try:
