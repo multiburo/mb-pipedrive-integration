@@ -221,21 +221,6 @@ class PipedriveService:
                 return person
         return None
 
-    def _search_person_by_phone(self, phone: str) -> Optional[Dict[str, Any]]:
-        """The only person holding this normalized phone, or None if there is none or it is shared."""
-        wanted = self._phone_key(phone)
-        if not wanted:
-            return None
-        # Stored phones come in mixed formats, so search loosely and compare normalized values ourselves
-        matches = {}
-        for person in self._search_persons(wanted, "phone", exact_match=False):
-            if wanted in {self._phone_key(v) for v in self._contact_values(person.get("phones"))}:
-                matches[person["id"]] = person
-        if len(matches) > 1:
-            logger.warning(f"Phone {wanted} is shared by persons {sorted(matches)}; not matching by phone")
-            return None
-        return next(iter(matches.values()), None)
-
     def find_person_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """Find a person by exact (case-insensitive) email in Pipedrive"""
         try:
@@ -307,18 +292,13 @@ class PipedriveService:
         """
         Get existing person or create new one with optional tags and custom fields.
 
-        A person matches only on an exact email or, when no email is given, on a phone that exactly
-        matches after normalization and belongs to a single person. Without a match a new person is
+        A person matches only on an exact email; a phone alone never matches, since phones are shared
+        (offices, families) and recycled. Without a match a new person is
         created; an existing one is never renamed, and its emails/phones are appended to, not replaced.
         If the lookup itself fails, returns None rather than risk creating a duplicate.
         """
         try:
-            if email:
-                person = self._search_person_by_email(email)
-            elif phone:
-                person = self._search_person_by_phone(phone)
-            else:
-                person = None
+            person = self._search_person_by_email(email) if email else None
         except (PipedriveAPIError, PipedriveNetworkError) as e:
             logger.error(f"Error looking up person '{name}' in Pipedrive, not creating a duplicate: {e}")
             return None

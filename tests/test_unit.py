@@ -648,39 +648,7 @@ class TestPersonExactMatching:
 
         assert self._methods() == ["GET", "POST"]
 
-    @responses.activate
-    def test_phone_only_shared_by_two_people_is_ambiguous(self, mock_service):
-        self._mock_search(
-            mock_service,
-            [
-                _search_item(1, "Uno", phones=["5555550000"]),
-                _search_item(2, "Dos", phones=["+52 55 5555 0000"]),
-            ],
-        )
-        self._mock_create(mock_service)
 
-        result = mock_service.get_or_create_person("Tres", phone="5555550000")
-
-        assert result["id"] == 900
-        assert "PUT" not in self._methods()
-
-    @responses.activate
-    def test_phone_only_unique_exact_match_is_used(self, mock_service):
-        self._mock_search(
-            mock_service,
-            [_search_item(1, "Uno", phones=["+52 1 55 5555 0000"]), _search_item(2, "Otro", phones=["5555550001"])],
-        )
-        responses.add(
-            responses.GET,
-            f"{mock_service.base_url}/persons/1",
-            json={"success": True, "data": _person(1, "Uno", phones=["+52 1 55 5555 0000"])},
-            status=200,
-        )
-
-        result = mock_service.get_or_create_person("Uno", phone="5555550000")
-
-        assert result["id"] == 1
-        assert "POST" not in self._methods()
 
     @responses.activate
     def test_lookup_failure_does_not_create_a_duplicate(self, mock_service):
@@ -777,3 +745,12 @@ class TestPersonExactMatching:
 
         assert result["id"] == 1
         assert self._methods() == ["GET"]
+
+    @responses.activate
+    def test_phone_alone_never_matches_an_existing_person(self, mock_service):
+        self._mock_create(mock_service)
+
+        result = mock_service.get_or_create_person("Carlos Ruiz", phone="5512345678")
+
+        assert result["id"] == 900
+        assert self._methods() == ["POST"]
