@@ -1,9 +1,10 @@
 import json
 import pytest
 import responses
+from unittest.mock import patch
 
 from mb_pipedrive_integration.dataclasses import PipedriveConfig
-from mb_pipedrive_integration.exceptions import PipedriveConfigError
+from mb_pipedrive_integration.exceptions import PipedriveAPIError, PipedriveConfigError
 from mb_pipedrive_integration.dataclasses import OrganizationData
 
 
@@ -363,14 +364,29 @@ class TestPipedriveServiceUnit:
             status=200,
         )
 
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/persons/123",
+            json={
+                "success": True,
+                "data": {
+                    "id": 123,
+                    "name": "Existing Person",
+                    "email": [{"value": "existing@example.com", "primary": True, "label": "work"}],
+                    "phone": [],
+                },
+            },
+            status=200,
+        )
+
         result = mock_service.get_or_create_person("Existing Person", "existing@example.com")
 
         assert result is not None
         assert result["id"] == 123
         assert result["name"] == "Existing Person"
 
-        # Should only make search call, not create call
-        assert len(responses.calls) == 1
+        # The exact email already matched and there is nothing to add: just the search
+        assert [c.request.method for c in responses.calls] == ["GET"]
 
     @responses.activate
     def test_get_or_create_person_new(self, mock_service):
@@ -501,3 +517,255 @@ class TestPipedriveServiceUnit:
         result = mock_service.add_deal_tags(deal_id, tags)
 
         assert result is False
+
+def _search_item(person_id, name, emails=(), phones=()):
+    return {"item": {"id": person_id, "name": name, "emails": list(emails), "phones": list(phones)}}
+
+
+def _person(person_id, name, emails=(), phones=()):
+    return {
+        "id": person_id,
+        "name": name,
+        "email": [{"value": v, "primary": i == 0, "label": "work"} for i, v in enumerate(emails)],
+        "phone": [{"value": v, "primary": i == 0, "label": "work"} for i, v in enumerate(phones)],
+    }
+
+
+class TestPersonExactMatching:
+    """get_or_create_person must never rewrite a person that is not exactly the same one """
+
+    @staticmethod
+    def _mock_search(service, items):
+        responses.add(
+            responses.GET,
+            f"{service.base_url}/persons/search",
+            json={"success": True, "data": {"items": items}},
+            status=200,
+        )
+
+    @staticmethod
+    def _mock_create(service, person_id=900):
+        responses.add(
+            responses.POST,
+            f"{service.base_url}/persons",
+            json={"success": True, "data": {"id": person_id, "name": "created"}},
+            status=200,
+        )
+
+    @staticmethod
+    def _methods():
+        return [c.request.method for c in responses.calls]
+
+    @responses.activate
+    def test_similar_email_is_not_matched(self, mock_service):
+        """ana@x.com must not match juana@x.com even if Pipedrive's fuzzy search returns it"""
+        self._mock_search(mock_service, [_search_item(1, "Juana", emails=["juana@x.com"])])
+        self._mock_create(mock_service)
+
+        result = mock_service.get_or_create_person("Ana", "ana@x.com")
+
+        assert result["id"] == 900
+        assert self._methods() == ["GET", "POST"]
+
+    @responses.activate
+    def test_exact_email_match_is_case_insensitive_and_never_renames(self, mock_service):
+        self._mock_search(mock_service, [_search_item(1, "Juana", emails=["Ana@X.com"])])
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/persons/1",
+            json={"success": True, "data": _person(1, "Ana Original", emails=["Ana@X.com"])},
+            status=200,
+        )
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/1",
+            json={"success": True, "data": {"id": 1, "name": "Ana Original"}},
+            status=200,
+        )
+
+        mock_service.get_or_create_person("Otro Nombre", "ana@x.com", phone="+52 55 1234 5678")
+
+        put_body = json.loads(responses.calls[-1].request.body)
+        assert "name" not in put_body
+        assert "POST" not in self._methods()
+
+    @responses.activate
+    def test_phone_is_appended_to_existing_list(self, mock_service):
+        self._mock_search(mock_service, [_search_item(1, "Ana", emails=["ana@x.com"])])
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/persons/1",
+            json={"success": True, "data": _person(1, "Ana", emails=["ana@x.com"], phones=["5511111111"])},
+            status=200,
+        )
+        responses.add(
+            responses.PUT,
+            f"{mock_service.base_url}/persons/1",
+            json={"success": True, "data": {"id": 1}},
+            status=200,
+        )
+
+        mock_service.get_or_create_person("Ana", "ana@x.com", phone="5522222222")
+
+        put_body = json.loads(responses.calls[-1].request.body)
+        assert [p["value"] for p in put_body["phone"]] == ["5511111111", "5522222222"]
+        assert [p["primary"] for p in put_body["phone"]] == [True, False]
+        assert "email" not in put_body
+
+    @responses.activate
+    def test_known_phone_in_other_format_is_not_added_again(self, mock_service):
+        self._mock_search(mock_service, [_search_item(1, "Ana", emails=["ana@x.com"])])
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/persons/1",
+            json={"success": True, "data": _person(1, "Ana", emails=["ana@x.com"], phones=["+52 1 55 1111 1111"])},
+            status=200,
+        )
+
+        mock_service.get_or_create_person("Ana", "ana@x.com", phone="5511111111")
+
+        assert "PUT" not in self._methods()
+
+    @responses.activate
+    def test_search_is_exact_and_url_encoded(self, mock_service):
+        self._mock_search(mock_service, [])
+        self._mock_create(mock_service)
+
+        mock_service.get_or_create_person("Juan", "juan+tag@x.com")
+
+        url = responses.calls[0].request.url
+        assert "fields=email" in url
+        assert "exact_match=true" in url
+        assert "term=juan%2Btag%40x.com" in url
+
+    @responses.activate
+    def test_shared_office_phone_does_not_match_when_email_differs(self, mock_service):
+        """A new advisor sharing an office phone with another person is created, not merged into them"""
+        self._mock_search(mock_service, [])
+        self._mock_create(mock_service)
+
+        mock_service.get_or_create_person("Asesora Nueva", "nueva@x.com", phone="55 5555 0000")
+
+        assert self._methods() == ["GET", "POST"]
+
+
+
+    @responses.activate
+    def test_lookup_failure_does_not_create_a_duplicate(self, mock_service):
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/persons/search",
+            json={"success": False},
+            status=500,
+        )
+
+        assert mock_service.get_or_create_person("Ana", "ana@x.com") is None
+        assert "POST" not in self._methods()
+
+    @responses.activate
+    def test_unusable_search_response_does_not_create_a_duplicate(self, mock_service):
+        """2xx with success=false is not "nobody matches"; it must not end in a new person"""
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/persons/search",
+            json={"success": False},
+            status=200,
+        )
+
+        assert mock_service.get_or_create_person("Ana", "ana@x.com") is None
+        assert self._methods() == ["GET"]
+
+    @responses.activate
+    def test_deal_is_not_created_when_a_participant_lookup_fails(self, mock_service, sample_deal_data):
+        responses.add(
+            responses.GET,
+            f"{mock_service.base_url}/persons/search",
+            json={"success": False},
+            status=200,
+        )
+
+        assert mock_service.create_deal(sample_deal_data) is None
+        assert self._methods() == ["GET"]
+
+    @responses.activate
+    def test_unexpected_errors_are_not_swallowed_by_create_deal(self, mock_service, sample_deal_data):
+        with patch.object(mock_service, "get_or_create_person", side_effect=KeyError("bug")):
+            with pytest.raises(KeyError):
+                mock_service.create_deal(sample_deal_data)
+
+    @staticmethod
+    def _service_with_person_fields():
+        from mb_pipedrive_integration import PipedriveService
+
+        return PipedriveService(
+            PipedriveConfig(domain="test-domain", api_token="t", custom_fields={"person_rfc": "rfc_hash"})
+        )
+
+    @responses.activate
+    def test_custom_field_already_set_sends_no_put(self):
+        service = self._service_with_person_fields()
+        self._mock_search(service, [_search_item(1, "Ana", emails=["ana@x.com"])])
+        responses.add(
+            responses.GET,
+            f"{service.base_url}/persons/1",
+            json={"success": True, "data": {**_person(1, "Ana", emails=["ana@x.com"]), "rfc_hash": "ABC"}},
+            status=200,
+        )
+
+        service.get_or_create_person("Ana", "ana@x.com", custom_fields={"rfc": "ABC"})
+
+        assert self._methods() == ["GET", "GET"]
+
+    @responses.activate
+    def test_changed_custom_field_is_sent_alone(self):
+        service = self._service_with_person_fields()
+        self._mock_search(service, [_search_item(1, "Ana", emails=["ana@x.com"])])
+        responses.add(
+            responses.GET,
+            f"{service.base_url}/persons/1",
+            json={"success": True, "data": {**_person(1, "Ana", emails=["ana@x.com"]), "rfc_hash": "OLD"}},
+            status=200,
+        )
+        responses.add(
+            responses.PUT,
+            f"{service.base_url}/persons/1",
+            json={"success": True, "data": {"id": 1}},
+            status=200,
+        )
+
+        service.get_or_create_person("Ana", "ana@x.com", custom_fields={"rfc": "NEW"})
+
+        assert json.loads(responses.calls[-1].request.body) == {"rfc_hash": "NEW"}
+
+    @responses.activate
+    def test_email_only_match_does_not_load_the_person(self, mock_service):
+        self._mock_search(mock_service, [_search_item(1, "Ana", emails=["ana@x.com"])])
+
+        result = mock_service.get_or_create_person("Ana", "ana@x.com")
+
+        assert result["id"] == 1
+        assert self._methods() == ["GET"]
+
+    @responses.activate
+    def test_phone_alone_never_matches_an_existing_person(self, mock_service):
+        self._mock_create(mock_service)
+
+        result = mock_service.get_or_create_person("Carlos Ruiz", phone="5512345678")
+
+        assert result["id"] == 900
+        assert self._methods() == ["POST"]
+
+    @responses.activate
+    def test_find_person_by_email_or_raise_tells_missing_from_failed(self, mock_service):
+        self._mock_search(mock_service, [])
+        assert mock_service.find_person_by_email_or_raise("ana@x.com") is None
+
+        responses.replace(
+            responses.GET,
+            f"{mock_service.base_url}/persons/search",
+            json={"success": False},
+            status=200,
+        )
+        with pytest.raises(PipedriveAPIError):
+            mock_service.find_person_by_email_or_raise("ana@x.com")
+        assert mock_service.find_person_by_email("ana@x.com") is None

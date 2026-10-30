@@ -1,6 +1,8 @@
 import logging
 import time
 from typing import Optional, Dict, Any, List, Union
+from urllib.parse import urlencode
+
 import requests
 
 from . import OrganizationData
@@ -150,11 +152,7 @@ class PipedriveService:
             if tags:
                 person_data["label"] = ",".join(tags)
 
-            if custom_fields and self.config.custom_fields:
-                for field_key, field_value in custom_fields.items():
-                    pipedrive_field_key = self.config.custom_fields.get(f"person_{field_key}")
-                    if pipedrive_field_key:
-                        person_data[pipedrive_field_key] = field_value
+            person_data.update(self._map_person_custom_fields(custom_fields))
 
             response = self._make_request("POST", "persons", person_data)
 
@@ -173,20 +171,122 @@ class PipedriveService:
             logger.error(f"Unexpected error creating person in Pipedrive: {str(e)}")
             return None
 
-    def find_person_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        """Find a person by email in Pipedrive"""
-        try:
-            response = self._make_request("GET", f"persons/search?term={email}&search_by_email=1")
-            if response and response.get("data", {}).get("items"):
-                # Pipedrive search returns items wrapped in 'item' objects
-                return response["data"]["items"][0]["item"]
+    @staticmethod
+    def _normalize_email(email: Optional[str]) -> str:
+        return (email or "").strip().lower()
+
+    @staticmethod
+    def _phone_key(phone: Optional[str]) -> str:
+        """Comparable form of a phone: digits only, last 10 (drops +52 / the mobile 1). Empty if too short to trust."""
+        digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+        return digits[-10:] if len(digits) >= 10 else ""
+
+    @staticmethod
+    def _contact_values(entries: Any) -> List[str]:
+        """Values of an emails/phones field; search returns plain strings or {'value': ...} depending on the endpoint."""
+        values = []
+        for entry in entries or []:
+            value = entry.get("value") if isinstance(entry, dict) else entry
+            if value:
+                values.append(str(value))
+        return values
+
+    def _map_person_custom_fields(self, custom_fields: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Custom fields keyed by their configured Pipedrive field hash; unmapped ones are dropped."""
+        mapped = {}
+        for field_key, field_value in (custom_fields or {}).items():
+            pipedrive_field_key = (self.config.custom_fields or {}).get(f"person_{field_key}")
+            if pipedrive_field_key:
+                mapped[pipedrive_field_key] = field_value
+        return mapped
+
+    def _search_persons(self, term: str, field: str, exact_match: bool) -> List[Dict[str, Any]]:
+        query = urlencode(
+            {"term": term, "fields": field, "exact_match": "true" if exact_match else "false", "limit": 20}
+        )
+        response = self._make_request("GET", f"persons/search?{query}")
+        if response is None:
+            # _make_request returns None for a 2xx with success=false or a 3xx; that is not "nobody matches"
+            raise PipedriveAPIError("Person search returned no usable response")
+        items = (response.get("data") or {}).get("items") or []
+        return [entry["item"] for entry in items if entry.get("item")]
+
+    def _search_person_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Person whose email list contains exactly this email. Raises on API/network errors."""
+        wanted = self._normalize_email(email)
+        if not wanted:
             return None
+        for person in self._search_persons(wanted, "email", exact_match=True):
+            if wanted in {self._normalize_email(v) for v in self._contact_values(person.get("emails"))}:
+                return person
+        return None
+
+    def find_person_by_email_or_raise(self, email: str) -> Optional[Dict[str, Any]]:
+        """
+        Like find_person_by_email, but a failed lookup raises PipedriveAPIError / PipedriveNetworkError instead
+        of returning None, so "no such person" can be told apart from "could not check".
+        """
+        return self._search_person_by_email(email)
+
+    def find_person_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Find a person by exact (case-insensitive) email in Pipedrive"""
+        try:
+            return self._search_person_by_email(email)
         except (PipedriveAPIError, PipedriveNetworkError) as e:
             logger.error(f"Error finding person by email in Pipedrive: {e}")
             return None
         except Exception as e:
             logger.error(f"Unexpected error finding person by email in Pipedrive: {e}")
             return None
+
+    def _merge_person_contact(
+            self,
+            person: Dict[str, Any],
+            email: Optional[str],
+            phone: Optional[str],
+            custom_fields: Optional[Dict[str, any]],
+    ) -> Dict[str, Any]:
+        """
+        Add the email/phone to an existing person's lists (never replacing them) and set custom fields.
+        The name and tags are left untouched. Returns the person as it stands afterwards.
+        """
+        person_id = person["id"]
+        mapped_fields = self._map_person_custom_fields(custom_fields)
+        if not phone and not mapped_fields:
+            # The match was on the email (or phone) itself, so there is nothing to add and no need to load the person
+            return person
+        try:
+            current = (self._make_request("GET", f"persons/{person_id}") or {}).get("data")
+        except (PipedriveAPIError, PipedriveNetworkError) as e:
+            logger.warning(f"Could not load person {person_id} to merge contact data, leaving it as is: {e}")
+            return person
+        if not current:
+            return person
+
+        update_data: Dict[str, Any] = {}
+        for field, new_value, key in (
+                ("email", email, self._normalize_email),
+                ("phone", phone, lambda v: self._phone_key(v) or str(v).strip()),
+        ):
+            entries = [e for e in (current.get(field) or []) if isinstance(e, dict) and e.get("value")]
+            if new_value and key(new_value) not in {key(e["value"]) for e in entries}:
+                entries.append({"value": new_value, "primary": not entries, "label": "work"})
+                update_data[field] = entries
+
+        update_data.update({key: value for key, value in mapped_fields.items() if current.get(key) != value})
+
+        if not update_data:
+            return current
+
+        try:
+            response = self._make_request("PUT", f"persons/{person_id}", update_data)
+        except (PipedriveAPIError, PipedriveNetworkError) as e:
+            logger.error(f"Failed to merge contact data into person {person_id} in Pipedrive: {e}")
+            return current
+        if response and response.get("success"):
+            return response.get("data") or current
+        logger.error(f"Failed to merge contact data into person {person_id} in Pipedrive: {response}")
+        return current
 
     def get_or_create_person(
             self,
@@ -198,22 +298,20 @@ class PipedriveService:
     ) -> Optional[Dict[str, Any]]:
         """
         Get existing person or create new one with optional tags and custom fields.
-        If person exists, updates their data to ensure it's current.
+
+        A person matches only on an exact email; a phone alone never matches, since phones are shared
+        (offices, families) and recycled. Without a match a new person is
+        created; an existing one is never renamed, and its emails/phones are appended to, not replaced.
+        If the lookup itself fails, returns None rather than risk creating a duplicate.
         """
-        if email:
-            person = self.find_person_by_email(email)
-            if person:
-                # Person exists - update them with current data
-                # NOTE: Don't update tags on existing persons - only set them during creation
-                person_data = PersonData(
-                    name=name,
-                    email=email,
-                    phone=phone,
-                    tags=None,  # Preserve existing tags
-                    custom_fields=custom_fields
-                )
-                updated_person = self.update_person(person["id"], person_data)
-                return updated_person if updated_person else person
+        try:
+            person = self._search_person_by_email(email) if email else None
+        except (PipedriveAPIError, PipedriveNetworkError) as e:
+            logger.error(f"Error looking up person '{name}' in Pipedrive, not creating a duplicate: {e}")
+            return None
+
+        if person:
+            return self._merge_person_contact(person, email, phone, custom_fields)
 
         return self.create_person(name, email, phone, tags, custom_fields)
 
@@ -332,45 +430,10 @@ class PipedriveService:
         """Create a deal in Pipedrive based on deal data"""
         try:
             # Create or get persons with appropriate tags
-            tenant_person = None
-            if deal_data.tenant:
-                tenant_person = self.get_or_create_person(
-                    name=deal_data.tenant.name,
-                    email=deal_data.tenant.email,
-                    phone=deal_data.tenant.phone,
-                    tags=deal_data.tenant.tags,
-                    custom_fields=deal_data.tenant.custom_fields
-                )
-
-            advisor_person = None
-            if deal_data.advisor:
-                advisor_person = self.get_or_create_person(
-                    name=deal_data.advisor.name,
-                    email=deal_data.advisor.email,
-                    phone=deal_data.advisor.phone,
-                    tags=deal_data.advisor.tags,
-                    custom_fields=deal_data.advisor.custom_fields
-                )
-
-            landlord_person = None
-            if deal_data.landlord:
-                landlord_person = self.get_or_create_person(
-                    name=deal_data.landlord.name,
-                    email=deal_data.landlord.email,
-                    phone=deal_data.landlord.phone,
-                    tags=deal_data.landlord.tags,
-                    custom_fields=deal_data.landlord.custom_fields
-                )
-
-            guarantor_person = None
-            if deal_data.guarantor:
-                guarantor_person = self.get_or_create_person(
-                    name=deal_data.guarantor.name,
-                    email=deal_data.guarantor.email,
-                    phone=deal_data.guarantor.phone,
-                    tags=deal_data.guarantor.tags,
-                    custom_fields=deal_data.guarantor.custom_fields
-                )
+            tenant_person = self._person_for_deal("tenant", deal_data.tenant)
+            advisor_person = self._person_for_deal("advisor", deal_data.advisor)
+            landlord_person = self._person_for_deal("landlord", deal_data.landlord)
+            guarantor_person = self._person_for_deal("guarantor", deal_data.guarantor)
 
             # Create or get organization
             organization = None
@@ -431,9 +494,24 @@ class PipedriveService:
                 logger.error(f"Failed to create deal in Pipedrive: {response}")
                 return None
 
-        except Exception as e:
+        except (PipedriveAPIError, PipedriveNetworkError) as e:
             logger.error(f"Error creating deal in Pipedrive: {str(e)}")
             return None
+
+    def _person_for_deal(self, role: str, contact: Optional[PersonData]) -> Optional[Dict[str, Any]]:
+        """Resolve a deal participant; raises when it cannot, so a deal is never created missing one."""
+        if not contact:
+            return None
+        person = self.get_or_create_person(
+            name=contact.name,
+            email=contact.email,
+            phone=contact.phone,
+            tags=contact.tags,
+            custom_fields=contact.custom_fields,
+        )
+        if not person:
+            raise PipedriveAPIError(f"Could not find or create the {role} in Pipedrive; deal not created")
+        return person
 
     def _add_deal_notes(self, deal_id: int, deal_data: DealData) -> bool:
         """Add notes to the deal with additional information"""
@@ -714,11 +792,7 @@ class PipedriveService:
                     update_data["label"] = person_data.tags
 
             # Add custom fields if provided
-            if person_data.custom_fields and self.config.custom_fields:
-                for field_key, field_value in person_data.custom_fields.items():
-                    pipedrive_field_key = self.config.custom_fields.get(f"person_{field_key}")
-                    if pipedrive_field_key:
-                        update_data[pipedrive_field_key] = field_value
+            update_data.update(self._map_person_custom_fields(person_data.custom_fields))
 
             # Make the update request
             response = self._make_request("PUT", f"persons/{person_id}", update_data)
