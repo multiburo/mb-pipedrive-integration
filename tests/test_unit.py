@@ -385,8 +385,8 @@ class TestPipedriveServiceUnit:
         assert result["id"] == 123
         assert result["name"] == "Existing Person"
 
-        # Search + load only: nothing to merge, so no PUT and no create
-        assert [c.request.method for c in responses.calls] == ["GET", "GET"]
+        # The exact email already matched and there is nothing to add: just the search
+        assert [c.request.method for c in responses.calls] == ["GET"]
 
     @responses.activate
     def test_get_or_create_person_new(self, mock_service):
@@ -724,3 +724,56 @@ class TestPersonExactMatching:
         with patch.object(mock_service, "get_or_create_person", side_effect=KeyError("bug")):
             with pytest.raises(KeyError):
                 mock_service.create_deal(sample_deal_data)
+
+    @staticmethod
+    def _service_with_person_fields():
+        from mb_pipedrive_integration import PipedriveService
+
+        return PipedriveService(
+            PipedriveConfig(domain="test-domain", api_token="t", custom_fields={"person_rfc": "rfc_hash"})
+        )
+
+    @responses.activate
+    def test_custom_field_already_set_sends_no_put(self):
+        service = self._service_with_person_fields()
+        self._mock_search(service, [_search_item(1, "Ana", emails=["ana@x.com"])])
+        responses.add(
+            responses.GET,
+            f"{service.base_url}/persons/1",
+            json={"success": True, "data": {**_person(1, "Ana", emails=["ana@x.com"]), "rfc_hash": "ABC"}},
+            status=200,
+        )
+
+        service.get_or_create_person("Ana", "ana@x.com", custom_fields={"rfc": "ABC"})
+
+        assert self._methods() == ["GET", "GET"]
+
+    @responses.activate
+    def test_changed_custom_field_is_sent_alone(self):
+        service = self._service_with_person_fields()
+        self._mock_search(service, [_search_item(1, "Ana", emails=["ana@x.com"])])
+        responses.add(
+            responses.GET,
+            f"{service.base_url}/persons/1",
+            json={"success": True, "data": {**_person(1, "Ana", emails=["ana@x.com"]), "rfc_hash": "OLD"}},
+            status=200,
+        )
+        responses.add(
+            responses.PUT,
+            f"{service.base_url}/persons/1",
+            json={"success": True, "data": {"id": 1}},
+            status=200,
+        )
+
+        service.get_or_create_person("Ana", "ana@x.com", custom_fields={"rfc": "NEW"})
+
+        assert json.loads(responses.calls[-1].request.body) == {"rfc_hash": "NEW"}
+
+    @responses.activate
+    def test_email_only_match_does_not_load_the_person(self, mock_service):
+        self._mock_search(mock_service, [_search_item(1, "Ana", emails=["ana@x.com"])])
+
+        result = mock_service.get_or_create_person("Ana", "ana@x.com")
+
+        assert result["id"] == 1
+        assert self._methods() == ["GET"]

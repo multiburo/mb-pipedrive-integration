@@ -152,11 +152,7 @@ class PipedriveService:
             if tags:
                 person_data["label"] = ",".join(tags)
 
-            if custom_fields and self.config.custom_fields:
-                for field_key, field_value in custom_fields.items():
-                    pipedrive_field_key = self.config.custom_fields.get(f"person_{field_key}")
-                    if pipedrive_field_key:
-                        person_data[pipedrive_field_key] = field_value
+            person_data.update(self._map_person_custom_fields(custom_fields))
 
             response = self._make_request("POST", "persons", person_data)
 
@@ -194,6 +190,15 @@ class PipedriveService:
             if value:
                 values.append(str(value))
         return values
+
+    def _map_person_custom_fields(self, custom_fields: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Custom fields keyed by their configured Pipedrive field hash; unmapped ones are dropped."""
+        mapped = {}
+        for field_key, field_value in (custom_fields or {}).items():
+            pipedrive_field_key = (self.config.custom_fields or {}).get(f"person_{field_key}")
+            if pipedrive_field_key:
+                mapped[pipedrive_field_key] = field_value
+        return mapped
 
     def _search_persons(self, term: str, field: str, exact_match: bool) -> List[Dict[str, Any]]:
         query = urlencode(
@@ -254,6 +259,10 @@ class PipedriveService:
         The name and tags are left untouched. Returns the person as it stands afterwards.
         """
         person_id = person["id"]
+        mapped_fields = self._map_person_custom_fields(custom_fields)
+        if not phone and not mapped_fields:
+            # The match was on the email (or phone) itself, so there is nothing to add and no need to load the person
+            return person
         try:
             current = (self._make_request("GET", f"persons/{person_id}") or {}).get("data")
         except (PipedriveAPIError, PipedriveNetworkError) as e:
@@ -272,11 +281,7 @@ class PipedriveService:
                 entries.append({"value": new_value, "primary": not entries, "label": "work"})
                 update_data[field] = entries
 
-        if custom_fields and self.config.custom_fields:
-            for field_key, field_value in custom_fields.items():
-                pipedrive_field_key = self.config.custom_fields.get(f"person_{field_key}")
-                if pipedrive_field_key:
-                    update_data[pipedrive_field_key] = field_value
+        update_data.update({key: value for key, value in mapped_fields.items() if current.get(key) != value})
 
         if not update_data:
             return current
@@ -800,11 +805,7 @@ class PipedriveService:
                     update_data["label"] = person_data.tags
 
             # Add custom fields if provided
-            if person_data.custom_fields and self.config.custom_fields:
-                for field_key, field_value in person_data.custom_fields.items():
-                    pipedrive_field_key = self.config.custom_fields.get(f"person_{field_key}")
-                    if pipedrive_field_key:
-                        update_data[pipedrive_field_key] = field_value
+            update_data.update(self._map_person_custom_fields(person_data.custom_fields))
 
             # Make the update request
             response = self._make_request("PUT", f"persons/{person_id}", update_data)
