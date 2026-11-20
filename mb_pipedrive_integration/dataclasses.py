@@ -1,6 +1,6 @@
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Union, List
 
 from .exceptions import PipedriveConfigError, PipedriveValidationError
@@ -99,7 +99,7 @@ class DealData:
 @dataclass
 class PipedriveConfig:
     domain: str
-    api_token: str
+    api_token: str = field(repr=False)
     default_pipeline_id: str = "1"
     default_stage_id: str = "1"
     custom_fields: Optional[Dict[str, str]] = None

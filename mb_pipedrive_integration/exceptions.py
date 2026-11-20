@@ -1,12 +1,42 @@
 """
 Custom exceptions for Pipedrive integration
 """
+import re
 from typing import Optional, Any
+
+# Matches API token values in query strings (api_token=...), headers (x-api-token: ...)
+# and dict reprs ('api_token': '...'), keeping the key and replacing only the value
+_API_TOKEN_PATTERN = re.compile(
+    r"(api[_-]token['\"]?\s*[:=]\s*['\"]?)[^\s'\"&,;)}#]+", re.IGNORECASE
+)
+# Dict keys whose whole value is the token, e.g. {"x-api-token": "..."}
+_API_TOKEN_KEY = re.compile(r"(x-)?api[_-]token", re.IGNORECASE)
+
+
+def redact_api_token(value: Any) -> Any:
+    """Return value with any API token masked; strings, dicts and lists are handled recursively"""
+    if isinstance(value, str):
+        return _API_TOKEN_PATTERN.sub(r"\1[REDACTED]", value)
+    if isinstance(value, dict):
+        return {
+            key: (
+                "[REDACTED]"
+                if isinstance(key, str) and _API_TOKEN_KEY.fullmatch(key)
+                else redact_api_token(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_api_token(item) for item in value]
+    return value
 
 
 class PipedriveError(Exception):
     """Base exception for Pipedrive-related errors"""
-    pass
+
+    def __init__(self, *args: Any) -> None:
+        # Redacted here so str(), repr() and args never expose an API token
+        super().__init__(*(redact_api_token(arg) for arg in args))
 
 
 class PipedriveConfigError(PipedriveError):
@@ -30,7 +60,7 @@ class PipedriveAPIError(PipedriveError):
                  response_data: Optional[dict[str, Any]] = None) -> None:
         super().__init__(message)
         self.status_code = status_code
-        self.response_data = response_data
+        self.response_data = redact_api_token(response_data)
 
     def __str__(self) -> str:
         base_message = super().__str__()
@@ -52,7 +82,7 @@ class PipedriveNetworkError(PipedriveError):
         if self.retry_count > 0:
             base_message += f" (after {self.retry_count} retries)"
         if self.original_error:
-            base_message += f". Original error: {self.original_error}"
+            base_message += f". Original error: {redact_api_token(str(self.original_error))}"
         return base_message
 
 
@@ -69,6 +99,6 @@ class PipedriveValidationError(PipedriveError):
         if self.field_name:
             base_message += f" (field: {self.field_name}"
             if self.field_value is not None:
-                base_message += f", value: {self.field_value}"
+                base_message += f", value: {redact_api_token(str(self.field_value))}"
             base_message += ")"
         return base_message
