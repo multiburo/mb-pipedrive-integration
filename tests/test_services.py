@@ -13,9 +13,11 @@ from mb_pipedrive_integration.dataclasses import (
     OrganizationData,
 )
 from mb_pipedrive_integration.exceptions import (
+    PipedriveError,
     PipedriveAPIError,
     PipedriveNetworkError,
     PipedriveConfigError,
+    PipedriveValidationError,
 )
 
 
@@ -695,7 +697,7 @@ class TestPipedriveService:
         """Test finding organization with pagination"""
         mock_service.config.custom_fields = {"org_mb_id": "hash123"}
 
-        # First page - FIXED: Include api_token in the URL pattern
+        # First page
         responses.add(
             responses.GET,
             f"{mock_service.base_url}/organizations",  # Use base URL without query params
@@ -2553,3 +2555,224 @@ class TestProductMethodsExhaustive:
         # Mock PersonData with empty name (should be caught by __post_init__)
         with pytest.raises(PipedriveValidationError):
             PersonData(name="")  # This should raise PipedriveValidationError in __post_init__
+
+
+FAKE_TOKEN = "fake-token-123"
+LEAKY_URL = f"https://test-domain.pipedrive.com/v1/persons?api_token={FAKE_TOKEN}"
+
+
+def _assert_token_not_exposed(exc):
+    """The token must not appear anywhere a consumer would log the exception"""
+    assert FAKE_TOKEN not in str(exc)
+    assert FAKE_TOKEN not in repr(exc)
+    assert FAKE_TOKEN not in str(exc.args)
+
+
+class TestApiTokenNotLeaked:
+    """The API token must travel in a header and never show up in exceptions or logs"""
+
+    @pytest.fixture
+    def service(self):
+        return PipedriveService(config=PipedriveConfig(domain="test-domain", api_token=FAKE_TOKEN))
+
+    @pytest.fixture(autouse=True)
+    def no_retry_wait(self):
+        with patch("mb_pipedrive_integration.services.time.sleep"):
+            yield
+
+    @responses.activate
+    @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "DELETE"])
+    def test_token_sent_in_header_not_query_string(self, service, method):
+        """Test that the API token is sent in the x-api-token header, not the query string"""
+        responses.add(method, f"{service.base_url}/persons/1", json={"success": True, "data": {}})
+
+        data = {"name": "x"} if method in ("POST", "PUT") else None
+        service._make_request(method, "persons/1", data)
+
+        request = responses.calls[0].request
+        assert request.headers["x-api-token"] == FAKE_TOKEN
+        assert FAKE_TOKEN not in request.url
+        assert "api_token" not in request.url
+
+    @responses.activate
+    def test_token_not_in_url_with_existing_query_string(self, service):
+        """Test that the API token is not added to an endpoint that already has a query string"""
+        responses.add(
+            responses.GET, f"{service.base_url}/persons/search", json={"success": True, "data": {}}
+        )
+
+        service._make_request("GET", "persons/search?term=ana&exact_match=true")
+
+        request = responses.calls[0].request
+        assert request.headers["x-api-token"] == FAKE_TOKEN
+        assert FAKE_TOKEN not in request.url
+
+    @responses.activate
+    def test_redirect_is_not_followed(self, service):
+        """Test that a redirect is not followed, so the token header never reaches another host"""
+        responses.add(
+            responses.GET,
+            f"{service.base_url}/users",
+            status=302,
+            headers={"Location": "http://other-host.example/collect"},
+        )
+        responses.add(responses.GET, "http://other-host.example/collect", json={"success": True})
+
+        result = service._make_request("GET", "users")
+
+        assert result is None
+        assert len(responses.calls) == 1
+        assert responses.calls[0].request.url == f"{service.base_url}/users"
+
+    def test_connection_error_does_not_expose_token(self, service, caplog):
+        """Test that a connection error echoing the URL does not expose the token"""
+        error = requests.exceptions.ConnectionError(f"Max retries exceeded with url: {LEAKY_URL}")
+        with patch("requests.get", side_effect=error):
+            with pytest.raises(PipedriveNetworkError) as exc_info:
+                service._make_request("GET", "persons")
+
+        _assert_token_not_exposed(exc_info.value)
+        assert "api_token=[REDACTED]" in str(exc_info.value)
+        assert exc_info.value.original_error is error
+        assert exc_info.value.retry_count == 3
+        assert FAKE_TOKEN not in caplog.text
+
+    def test_timeout_does_not_expose_token(self, service, caplog):
+        """Test that a timeout echoing the URL does not expose the token"""
+        error = requests.exceptions.Timeout(f"Read timed out: {LEAKY_URL}")
+        with patch("requests.get", side_effect=error):
+            with pytest.raises(PipedriveNetworkError) as exc_info:
+                service._make_request("GET", "persons")
+
+        _assert_token_not_exposed(exc_info.value)
+        assert FAKE_TOKEN not in caplog.text
+
+    def test_unexpected_request_error_does_not_expose_token(self, service, caplog):
+        """Test that an unexpected request error does not expose the token in the error or logs"""
+        error = requests.exceptions.TooManyRedirects(f"Exceeded 30 redirects: {LEAKY_URL}")
+        with patch("requests.get", side_effect=error):
+            with pytest.raises(PipedriveNetworkError) as exc_info:
+                service._make_request("GET", "persons")
+
+        _assert_token_not_exposed(exc_info.value)
+        assert exc_info.value.original_error is error
+        assert FAKE_TOKEN not in caplog.text
+
+    @responses.activate
+    def test_api_error_with_text_body_does_not_expose_token(self, service):
+        """Test that an HTTP error with a non-JSON body does not expose the token"""
+        responses.add(
+            responses.GET,
+            f"{service.base_url}/persons",
+            body=f"<html>Bad gateway for {LEAKY_URL}</html>",
+            status=502,
+        )
+
+        with pytest.raises(PipedriveAPIError) as exc_info:
+            service._make_request("GET", "persons")
+
+        _assert_token_not_exposed(exc_info.value)
+        assert FAKE_TOKEN not in str(exc_info.value.response_data)
+        assert exc_info.value.status_code == 502
+
+    @responses.activate
+    def test_api_error_with_json_body_does_not_expose_token(self, service):
+        """Test that an HTTP error with a JSON body does not expose the token"""
+        responses.add(
+            responses.GET,
+            f"{service.base_url}/persons",
+            json={
+                "success": False,
+                "error": f"Unauthorized: {LEAKY_URL}",
+                "data": [{"x-api-token": FAKE_TOKEN}],
+            },
+            status=401,
+        )
+
+        with pytest.raises(PipedriveAPIError) as exc_info:
+            service._make_request("GET", "persons")
+
+        _assert_token_not_exposed(exc_info.value)
+        assert FAKE_TOKEN not in str(exc_info.value.response_data)
+        assert exc_info.value.response_data["success"] is False
+
+    @responses.activate
+    def test_rate_limit_error_does_not_expose_token(self, service):
+        """Test that a rate limit error does not expose the token"""
+        responses.add(
+            responses.GET,
+            f"{service.base_url}/persons",
+            json={"error": f"Too many requests for {LEAKY_URL}"},
+            status=429,
+        )
+
+        with pytest.raises(PipedriveAPIError) as exc_info:
+            service._make_request("GET", "persons")
+
+        _assert_token_not_exposed(exc_info.value)
+        assert FAKE_TOKEN not in str(exc_info.value.response_data)
+
+
+class TestExceptionRedaction:
+    """Every library exception masks API tokens in its message, args and logged attributes"""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            LEAKY_URL,
+            f"https://x.pipedrive.com/v1/deals?start=0&api_token={FAKE_TOKEN}&limit=10",
+            f"headers: {{'x-api-token': '{FAKE_TOKEN}'}}",
+            f'headers: {{"x-api-token": "{FAKE_TOKEN}"}}',
+            f"x-api-token: {FAKE_TOKEN}",
+            f"params={{'api_token': '{FAKE_TOKEN}'}}",
+        ],
+    )
+    def test_all_exception_classes_redact_message(self, text):
+        """Test that every exception class masks the token in its message and args"""
+        exceptions = [
+            PipedriveError(text),
+            PipedriveConfigError(text, missing_fields=["PIPEDRIVE_API_TOKEN"]),
+            PipedriveAPIError(text, status_code=400, response_data={"error": text}),
+            PipedriveNetworkError(text, original_error=Exception(text), retry_count=2),
+            PipedriveValidationError(text, field_name="url", field_value=text),
+        ]
+
+        for exc in exceptions:
+            _assert_token_not_exposed(exc)
+
+    def test_redaction_keeps_rest_of_message(self):
+        """Test that redaction only replaces the token value and keeps the rest of the message"""
+        exc = PipedriveNetworkError(
+            "Connection error after all retries",
+            original_error=requests.exceptions.ConnectionError(f"Network unreachable: {LEAKY_URL}"),
+            retry_count=3,
+        )
+
+        assert str(exc) == (
+            "Connection error after all retries (after 3 retries). Original error: "
+            "Network unreachable: https://test-domain.pipedrive.com/v1/persons?api_token=[REDACTED]"
+        )
+
+    def test_api_error_response_data_redacted_recursively(self):
+        """Test that response_data is redacted inside nested dicts and lists"""
+        exc = PipedriveAPIError(
+            "HTTP 400",
+            status_code=400,
+            response_data={"error": LEAKY_URL, "items": [{"url": LEAKY_URL}, 1, None], "code": 7},
+        )
+
+        assert exc.response_data == {
+            "error": LEAKY_URL.replace(FAKE_TOKEN, "[REDACTED]"),
+            "items": [{"url": LEAKY_URL.replace(FAKE_TOKEN, "[REDACTED]")}, 1, None],
+            "code": 7,
+        }
+
+    def test_text_without_token_is_unchanged(self):
+        """Test that messages and response data without a token are left unchanged"""
+        exc = PipedriveAPIError(
+            "HTTP 404: Not Found", status_code=404, response_data={"error": "Not found"}
+        )
+
+        assert str(exc) == "HTTP 404: Not Found (HTTP 404)"
+        assert exc.args == ("HTTP 404: Not Found",)
+        assert exc.response_data == {"error": "Not found"}

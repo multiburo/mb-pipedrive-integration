@@ -185,6 +185,12 @@ class TestPipedriveConfig:
         assert config.default_pipeline_id == "2"
         assert config.default_stage_id == "3"
 
+    def test_repr_hides_api_token(self):
+        """Test that repr does not expose the API token"""
+        config = PipedriveConfig(domain="test-domain", api_token="fake-token-123")
+        assert "fake-token-123" not in repr(config)
+        assert config.api_token == "fake-token-123"
+
     def test_base_url_property(self):
         """Test base_url property construction"""
         config = PipedriveConfig(domain="my-company", api_token="token")

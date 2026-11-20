@@ -7,7 +7,12 @@ import requests
 
 from . import OrganizationData
 from .dataclasses import PipedriveConfig, DealData, ProductData, PersonData
-from .exceptions import PipedriveAPIError, PipedriveNetworkError, PipedriveConfigError
+from .exceptions import (
+    PipedriveAPIError,
+    PipedriveNetworkError,
+    PipedriveConfigError,
+    redact_api_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,18 +41,26 @@ class PipedriveService:
     ) -> Optional[Dict[str, Any]]:
         """Make a request to Pipedrive API with retry logic and proper error handling"""
         url = f"{self.base_url}/{endpoint}"
-        params = {"api_token": self.config.api_token}
+        # Token goes in a header, never in the URL, so request errors cannot echo it.
+        # Redirects are not followed: requests would resend this header to the new host
+        headers = {"x-api-token": self.config.api_token}
 
         for attempt in range(max_retries):
             try:
                 if method == "GET":
-                    response = requests.get(url, params=params, timeout=30)
+                    response = requests.get(url, headers=headers, timeout=30, allow_redirects=False)
                 elif method == "POST":
-                    response = requests.post(url, params=params, json=data, timeout=30)
+                    response = requests.post(
+                        url, headers=headers, json=data, timeout=30, allow_redirects=False
+                    )
                 elif method == "PUT":
-                    response = requests.put(url, params=params, json=data, timeout=30)
+                    response = requests.put(
+                        url, headers=headers, json=data, timeout=30, allow_redirects=False
+                    )
                 elif method == "DELETE":
-                    response = requests.delete(url, params=params, timeout=30)
+                    response = requests.delete(
+                        url, headers=headers, timeout=30, allow_redirects=False
+                    )
                 else:
                     raise PipedriveAPIError(f"Unsupported HTTP method: {method}")
 
@@ -120,7 +133,7 @@ class PipedriveService:
                     )
 
             except requests.exceptions.RequestException as e:
-                logger.error(f"Unexpected request error: {e}")
+                logger.error(f"Unexpected request error: {redact_api_token(str(e))}")
                 raise PipedriveNetworkError(
                     f"Network error: {e}",
                     original_error=e,
