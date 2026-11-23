@@ -2608,21 +2608,42 @@ class TestApiTokenNotLeaked:
         assert FAKE_TOKEN not in request.url
 
     @responses.activate
-    def test_redirect_is_not_followed(self, service):
-        """Test that a redirect is not followed, so the token header never reaches another host"""
+    @pytest.mark.parametrize("status", [301, 302, 307, 308])
+    def test_redirect_is_not_followed_and_raises(self, service, status):
+        """Test that a redirect is not followed, so the token header never reaches another host,
+        and that it raises instead of returning None, which a search would read as "not found"
+        """
         responses.add(
             responses.GET,
             f"{service.base_url}/users",
-            status=302,
+            status=status,
             headers={"Location": "http://other-host.example/collect"},
         )
         responses.add(responses.GET, "http://other-host.example/collect", json={"success": True})
 
-        result = service._make_request("GET", "users")
+        with pytest.raises(PipedriveAPIError) as exc_info:
+            service._make_request("GET", "users")
 
-        assert result is None
+        assert exc_info.value.status_code == status
+        assert exc_info.value.response_data == {"location": "http://other-host.example/collect"}
         assert len(responses.calls) == 1
         assert responses.calls[0].request.url == f"{service.base_url}/users"
+
+    @responses.activate
+    def test_redirected_person_search_raises_with_its_status(self, service):
+        """Test that a redirected person search raises the redirect, not a generic or "not found" result"""
+        responses.add(
+            responses.GET,
+            f"{service.base_url}/persons/search",
+            status=301,
+            headers={"Location": "https://other-domain.pipedrive.com/v1/persons/search"},
+        )
+
+        with pytest.raises(PipedriveAPIError) as exc_info:
+            service.find_person_by_email_or_raise("ana@example.com")
+
+        assert exc_info.value.status_code == 301
+        assert "redirect" in str(exc_info.value)
 
     def test_connection_error_does_not_expose_token(self, service, caplog):
         """Test that a connection error echoing the URL does not expose the token"""

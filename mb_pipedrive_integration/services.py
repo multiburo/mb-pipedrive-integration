@@ -87,6 +87,15 @@ class PipedriveService:
                             response_data=response.json() if response.content else None
                         )
 
+                # Redirects are not followed (see above). Raise rather than return None, which
+                # search callers would read as "not found" and then create a duplicate
+                elif 300 <= response.status_code < 400:
+                    raise PipedriveAPIError(
+                        f"HTTP {response.status_code}: unexpected redirect from Pipedrive",
+                        status_code=response.status_code,
+                        response_data={"location": response.headers.get("Location")}
+                    )
+
                 # Handle client errors (4xx) and server errors (5xx)
                 elif response.status_code >= 400:
                     error_data = None
@@ -102,7 +111,7 @@ class PipedriveService:
                         response_data=error_data
                     )
 
-                # Handle unexpected success codes (3xx redirects, etc.)
+                # Handle any other unexpected status (1xx)
                 else:
                     logger.warning(f"Unexpected response status {response.status_code}: {response.reason}")
                     return None
@@ -219,7 +228,7 @@ class PipedriveService:
         )
         response = self._make_request("GET", f"persons/search?{query}")
         if response is None:
-            # _make_request returns None for a 2xx with success=false or a 3xx; that is not "nobody matches"
+            # _make_request returns None for a 2xx with success=false; that is not "nobody matches"
             raise PipedriveAPIError("Person search returned no usable response")
         items = (response.get("data") or {}).get("items") or []
         return [entry["item"] for entry in items if entry.get("item")]
